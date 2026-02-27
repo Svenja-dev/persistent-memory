@@ -1,9 +1,23 @@
+# Secrets
 .env
 *.env.local
+
+# Supabase local state
+supabase/.temp/
+supabase/.branches/
+
+# Backups (generierte Dateien)
+backup/memory_backup_*.json
+
+# Dependencies
 node_modules/
+
+# Python
 __pycache__/
 *.pyc
 .venv/
 venv/
+
+# Session artifacts
 Review_*.md
 SESSION_NOTES_*.md

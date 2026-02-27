@@ -158,16 +158,16 @@ curl -s -H "Authorization: Bearer $API_SECRET" \
 
 ## Backup-Routine
 
-Backup-Verzeichnis: `C:/Projekte/memory-backups/` (wird automatisch auf Google Drive gesichert)
-
-Backup-Script: `C:/Projekte/memory-backups/backup_memory.py`
+Backup-Script: `persistent-memory/backup/backup_memory.py`
 
 Das Script kann manuell oder per Scheduled Task ausgefuehrt werden:
 ```bash
-python C:/Projekte/memory-backups/backup_memory.py
+cd persistent-memory/backup
+python backup_memory.py
 ```
 
 Es erstellt eine JSON-Datei mit Zeitstempel und loescht Backups aelter als 30 Tage.
+Backup-Verzeichnis wird automatisch auf Google Drive gesichert (sofern konfiguriert).
 
 ## Kategorien-Referenz
 
@@ -206,26 +206,24 @@ Es erstellt eine JSON-Datei mit Zeitstempel und loescht Backups aelter als 30 Ta
 
 ### 1. Supabase Migration ausfuehren
 ```bash
-cd C:/Projekte/slack-task-manager
-npx supabase db push
-# oder manuell im Supabase Dashboard: SQL Editor -> Migration einfuegen
+cd persistent-memory
+supabase link --project-ref naatzputlsusiiczltzp
+supabase db push
 ```
 
 ### 2. Edge Function deployen
 ```bash
-cd C:/Projekte/slack-task-manager
-npx supabase functions deploy memory-manager --no-verify-jwt
+supabase functions deploy memory-manager --no-verify-jwt
 ```
 
 ### 3. Skill in Cowork installieren
-Den Ordner `persistent-memory` nach `C:/Users/Anwender/.skills/skills/` kopieren
-oder den Inhalt ueber die Cowork-Oberflaeche als Skill hinzufuegen.
+Den Ordner `persistent-memory` ueber die Cowork-Oberflaeche als Skill hinzufuegen
+oder nach `~/.claude/skills/persistent-memory/` kopieren (Claude Code).
 
 ### 4. Backup einrichten
 ```bash
-# Einmalig testen
-python C:/Projekte/memory-backups/backup_memory.py
-
-# Optional: Windows Task Scheduler fuer taegliches Backup
-# Oder als Cowork Scheduled Task einrichten
+cd persistent-memory/backup
+cp .env.example .env
+# .env editieren: API_SECRET_BACKUP=dein-secret
+python backup_memory.py
 ```

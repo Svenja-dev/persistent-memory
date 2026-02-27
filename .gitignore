@@ -5,3 +5,5 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+Review_*.md
+SESSION_NOTES_*.md

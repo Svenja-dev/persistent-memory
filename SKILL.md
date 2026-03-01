@@ -17,10 +17,19 @@ Dieses Skill steuert ein dreischichtiges Memory-System in Supabase:
 ## Konfiguration
 
 Die API-Endpunkt-URL und ein Secret muessen als Umgebungsvariablen verfuegbar sein.
-Falls nicht vorhanden, nutze diese Werte:
+
+**Cowork:** Die `.env`-Datei liegt im gemounteten Ordner unter `persistent-memory/.env`.
+Bei Session-Start diese Datei lesen und die Variablen setzen:
+
+```bash
+export $(grep -v '^#' /pfad/zum/persistent-memory/.env | xargs)
+```
+
+**Andere Clients:** Umgebungsvariablen setzen oder `.env` im Projektverzeichnis anlegen.
 
 ```
 MEMORY_API_URL=https://naatzputlsusiiczltzp.supabase.co/functions/v1/memory-manager
+API_SECRET=<aus .env lesen, NICHT hier im Klartext>
 ```
 
 Der API_SECRET ist derselbe wie fuer die anderen Supabase Edge Functions (get-roadmap, get-tasks).

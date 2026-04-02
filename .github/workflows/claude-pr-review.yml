@@ -1,0 +1,89 @@
+# Claude AI PR Review
+# =====================
+# Nutzt anthropics/claude-code-action fuer automatisches PR-Review.
+# Kopiere diese Datei nach .github/workflows/claude-pr-review.yml
+# in jedem Repo, das AI-Review bekommen soll.
+#
+# Voraussetzungen:
+# 1. GitHub Secret: ANTHROPIC_API_KEY (dein Claude API Key)
+# 2. GitHub Actions Budget muss verfuegbar sein
+# 3. Repository Settings -> Actions -> General -> Allow all actions
+#
+# Kosten: ~$0.05-0.20 pro PR-Review (je nach Diff-Groesse)
+# Bei 10 PRs/Monat = ~$1-2/Monat
+#
+# Basiert auf dem Pattern aus NateBJones-Projects/OB1 (eigene Implementierung)
+
+name: Claude PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
+
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Nur bei PRs gegen main/master
+    if: github.event.pull_request.base.ref == 'main' || github.event.pull_request.base.ref == 'master'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Claude Review
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Passe den Prompt an dein Projekt an:
+          prompt: |
+            Review this PR. Focus on:
+
+            1. SECURITY (highest priority):
+               - No secrets, API keys, tokens, or credentials in code
+               - No hardcoded passwords or connection strings
+               - Input validation present where needed
+               - No SQL injection vectors
+               - No unsafe eval() or exec() usage
+
+            2. CODE QUALITY:
+               - DRY principle: No unnecessary duplication
+               - Single Responsibility: Functions do one thing
+               - Error handling: Errors caught and handled gracefully
+               - Type safety: Types/schemas used where applicable
+
+            3. ARCHITECTURE:
+               - Does this change fit the existing architecture?
+               - Are there breaking changes?
+               - Is the change backwards compatible?
+
+            4. PRACTICAL:
+               - Will this work on first deploy?
+               - Are environment variables documented?
+               - Is there a migration path if needed?
+
+            Be concise. Flag real issues, not style preferences.
+            Use this format for each finding:
+
+            **[SEVERITY]** filename:line - Description
+            Severities: CRITICAL (blocks merge), WARNING (should fix), INFO (suggestion)
+
+            End with a summary: "X critical, Y warnings, Z info items found."
+            If no issues: "No issues found. LGTM."
+
+      # Optional: Automatischer Approval bei 0 Critical Findings
+      # Auskommentieren wenn gewuenscht:
+      # - name: Auto-approve if clean
+      #   if: success()
+      #   uses: hmarr/auto-approve-action@v4
+      #   with:
+      #     github-token: ${{ secrets.GITHUB_TOKEN }}

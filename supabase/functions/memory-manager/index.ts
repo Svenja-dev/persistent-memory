@@ -305,6 +305,19 @@ async function handleGet(tier: Tier, params: URLSearchParams) {
 async function handlePost(body: any) {
   const { tier, action: bodyAction, ...entry } = body;
 
+  // Allowlist: nur bekannte Felder an die DB weiterleiten
+  const ALLOWED_FIELDS = [
+    'id', 'project', 'category', 'title', 'content', 'tags',
+    'importance', 'priority', 'session_id', 'tool', 'summary',
+    'decisions_made', 'issues_encountered', 'files_changed',
+  ];
+  const sanitizedEntry: Record<string, unknown> = {};
+  for (const key of ALLOWED_FIELDS) {
+    if (key in entry) {
+      sanitizedEntry[key] = entry[key];
+    }
+  }
+
   // Backfill embeddings action
   if (bodyAction === "backfill_embeddings") {
     if (!OPENAI_API_KEY) {
@@ -348,7 +361,7 @@ async function handlePost(body: any) {
       tier,
       processed,
       errors,
-      remaining: entries.length - processed,
+      failed_in_batch: entries.length - processed,
     };
   }
 
@@ -359,19 +372,19 @@ async function handlePost(body: any) {
   const table = getTableName(tier);
 
   // Generate embedding for core and active entries (not sessions)
-  if (OPENAI_API_KEY && (tier === "core" || tier === "active") && entry.title && entry.content) {
-    const embedding = await generateEmbedding(`${entry.title} ${entry.content}`);
+  if (OPENAI_API_KEY && (tier === "core" || tier === "active") && sanitizedEntry.title && sanitizedEntry.content) {
+    const embedding = await generateEmbedding(`${sanitizedEntry.title} ${sanitizedEntry.content}`);
     if (embedding) {
-      entry.embedding = embedding;
+      sanitizedEntry.embedding = embedding;
     }
   }
 
   // Upsert: if id is provided, update; otherwise insert
-  if (entry.id) {
+  if (sanitizedEntry.id) {
     const { data, error } = await supabase
       .from(table)
-      .update(entry)
-      .eq("id", entry.id)
+      .update(sanitizedEntry)
+      .eq("id", sanitizedEntry.id)
       .select()
       .single();
 
@@ -380,13 +393,13 @@ async function handlePost(body: any) {
       success: true,
       action: "updated",
       tier,
-      embedding_generated: !!entry.embedding,
+      embedding_generated: !!sanitizedEntry.embedding,
       data,
     };
   } else {
     const { data, error } = await supabase
       .from(table)
-      .insert(entry)
+      .insert(sanitizedEntry)
       .select()
       .single();
 
@@ -395,7 +408,7 @@ async function handlePost(body: any) {
       success: true,
       action: "created",
       tier,
-      embedding_generated: !!entry.embedding,
+      embedding_generated: !!sanitizedEntry.embedding,
       data,
     };
   }

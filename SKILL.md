@@ -134,7 +134,7 @@ LIES ALLES und beruecksichtige es im weiteren Verlauf der Session.
 
 ### In memory_sessions schreiben bei:
 - Session-Ende: Zusammenfassung was gemacht wurde (sofern Secret verfuegbar)
-- Feld `tool` konsistent setzen: `cowork`, `claude_code`, `openclaw`, `api` oder `other`
+- Feld `tool` konsistent setzen: `cowork`, `claude_code`, `api` oder `other` (Legacy: `openclaw` wird noch akzeptiert)
 
 ## API-Referenz
 

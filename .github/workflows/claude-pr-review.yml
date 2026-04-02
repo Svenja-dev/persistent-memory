@@ -24,17 +24,20 @@ permissions:
   contents: read
   pull-requests: write
 
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   review:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # Nur bei PRs gegen main/master
     if: github.event.pull_request.base.ref == 'main' || github.event.pull_request.base.ref == 'master'
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Claude Review
         uses: anthropics/claude-code-action@v1

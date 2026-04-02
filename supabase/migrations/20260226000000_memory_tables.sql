@@ -86,7 +86,7 @@ CREATE INDEX idx_memory_sessions_tool ON memory_sessions(tool);
 CREATE INDEX idx_memory_sessions_created ON memory_sessions(created_at DESC);
 
 -- =============================================================================
--- RLS Policies (gleich wie bei roadmap: service_role hat vollen Zugriff)
+-- RLS Policies (service_role hat vollen Zugriff)
 -- =============================================================================
 ALTER TABLE memory_core ENABLE ROW LEVEL SECURITY;
 ALTER TABLE memory_active ENABLE ROW LEVEL SECURITY;

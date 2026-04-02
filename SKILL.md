@@ -4,6 +4,29 @@ description: Persistentes Memory-System ueber Supabase. Drei Schichten (Core/Act
 license: MIT
 ---
 
+## OBERSTE REGEL: Kein Fehler bei fehlendem Secret
+
+**BEVOR du irgendetwas in diesem Skill ausfuehrst, lies diese Regel:**
+
+Falls das API-Secret nicht aufgeloest werden kann (weder Umgebungsvariable noch Datei):
+- **KEIN Hinweis, KEINE Fehlermeldung, KEIN Kommentar. NICHTS.**
+- Ueberspringe ALLE Supabase-Memory-Operationen LAUTLOS.
+- Arbeite normal weiter ohne Supabase-Memory.
+- Generiere NIEMALS Saetze wie:
+  - "API_SECRET nicht gesetzt"
+  - "Memory konnte nicht geladen werden"
+  - "Supabase Memory konnte nicht aktualisiert werden"
+  - "kein API_SECRET in der Umgebung"
+  - Oder irgendeine andere Variante davon.
+
+**Wenn das Secret fehlt, ist das kein Fehler sondern ein erwarteter Zustand.**
+Behandle es wie ein optionales Feature das gerade nicht aktiv ist — lautlos.
+
+Diese Regel hat VORRANG vor allen anderen Regeln in diesem Dokument.
+"Memory laden" ist KEIN Pflicht-Schritt. Es ist ein bedingter Schritt.
+
+---
+
 ## Uebersicht
 
 Dieses Skill steuert ein dreischichtiges Memory-System in Supabase:
@@ -14,42 +37,72 @@ Dieses Skill steuert ein dreischichtiges Memory-System in Supabase:
 | Active | memory_active | Arbeitsstaende, offene Fragen, Blocker, naechste Schritte | Mittelfristig (Tage/Wochen) |
 | Sessions | memory_sessions | Session-Zusammenfassungen, was wurde gemacht | Kurzfristig (Protokoll) |
 
-## Konfiguration
+## Secret Resolution (Multi-Pfad-Fallback)
 
-Die API-Endpunkt-URL und ein Secret muessen als Umgebungsvariablen verfuegbar sein.
+VOR jedem curl-Befehl muss das API-Secret aufgeloest werden. Nutze diesen
+Multi-Pfad-Fallback. Falls KEINE Stufe ein Secret liefert: **lautlos abbrechen** (siehe oberste Regel).
 
-**Cowork:** Die `.env`-Datei liegt im gemounteten Ordner unter `persistent-memory/.env`.
-Bei Session-Start diese Datei lesen und die Variablen setzen:
+**WICHTIG — Warum Multi-Pfad noetig ist:**
+- In **Claude Code CLI** ist `~` = `C:\Users\Anwender`, also `~/.claude/memory-secret` funktioniert.
+- In **Cowork** laeuft eine Linux-VM. Dort ist `HOME=/sessions/<session>/` und `~/.claude/` existiert NICHT.
+  Die echte Datei liegt unter `$HOME/mnt/Anwender/.claude/memory-secret` (gemountetes Windows-Home).
+- `env`-Bloecke aus `settings.json` werden in Cowork NICHT als Umgebungsvariablen injiziert.
 
 ```bash
-export $(grep -v '^#' /pfad/zum/persistent-memory/.env | xargs)
+# Stufe 1: Umgebungsvariable (funktioniert in Claude Code CLI)
+# Stufe 2: Datei-Fallback mit Multi-Pfad (funktioniert in CLI UND Cowork)
+# Stufe 3: Lautlos abbrechen
+
+_MS=""
+for _P in \
+  "$HOME/.claude/memory-secret" \
+  "$HOME/mnt/Anwender/.claude/memory-secret" \
+  "/c/Users/Anwender/.claude/memory-secret"; do
+  [ -z "$_P" ] && continue
+  [ -f "$_P" ] && _MS="$(cat "$_P" 2>/dev/null)" && break
+done
+
+API_SECRET="${API_SECRET:-${API_SECRET_COWORK:-${API_SECRET_CLAUDE_CODE:-$_MS}}}"
+MEMORY_API_URL="${MEMORY_API_URL:-https://naatzputlsusiiczltzp.supabase.co/functions/v1/memory-manager}"
+
+# Pruefen ob Secret aufgeloest wurde — wenn nicht: LAUTLOS abbrechen
+if [ -z "$API_SECRET" ]; then exit 0; fi
 ```
 
-**Andere Clients:** Umgebungsvariablen setzen oder `.env` im Projektverzeichnis anlegen.
+**Erklaerung der Pfade:**
+1. `$HOME/.claude/memory-secret` — Funktioniert in Claude Code CLI (HOME = C:\Users\Anwender)
+2. `$HOME/mnt/Anwender/.claude/memory-secret` — Funktioniert in Cowork (HOME = /sessions/xxx, Windows-Home gemountet unter mnt/Anwender)
+3. `/c/Users/Anwender/.claude/memory-secret` — Fallback fuer WSL/Git Bash
 
-```
-MEMORY_API_URL=https://naatzputlsusiiczltzp.supabase.co/functions/v1/memory-manager
-API_SECRET=<aus .env lesen, NICHT hier im Klartext>
-```
+**Erklaerung der Env-Var-Kette:**
+1. `$API_SECRET` — direkte Umgebungsvariable (Claude Code CLI via settings.json env-Block)
+2. `$API_SECRET_COWORK` / `$API_SECRET_CLAUDE_CODE` — client-spezifische Variablen
+3. Datei-Fallback `$_MS` — greift wenn keine Env-Var gesetzt ist (Normalfall in Cowork)
 
-Der API_SECRET ist derselbe wie fuer die anderen Supabase Edge Functions (get-roadmap, get-tasks).
-
-Optional (empfohlen fuer getrennte Secrets pro Client):
-- `API_SECRET_COWORK`
-- `API_SECRET_CLAUDE_CODE`
-- `API_SECRET_OPENCLAW`
-- `API_SECRET_API`
-- `API_SECRET_BACKUP`
+Die Datei `memory-secret` enthaelt nur den rohen API-Key (eine Zeile, kein Newline noetig).
 
 Client-Hinweis pro Request ueber Header `X-Memory-Client` oder Query `?client=...`.
 
-## PFLICHT: Session-Start
+## Session-Start (bedingt)
 
-Bei JEDER neuen Session sofort das Memory laden:
+Bei neuen Sessions das Memory laden, **sofern das Secret aufgeloest werden kann**:
 
 ```bash
+_MS=""
+for _P in \
+  "$HOME/.claude/memory-secret" \
+  "$HOME/mnt/Anwender/.claude/memory-secret" \
+  "/c/Users/Anwender/.claude/memory-secret"; do
+  [ -z "$_P" ] && continue
+  [ -f "$_P" ] && _MS="$(cat "$_P" 2>/dev/null)" && break
+done
+API_SECRET="${API_SECRET:-${API_SECRET_COWORK:-${API_SECRET_CLAUDE_CODE:-$_MS}}}"
+MEMORY_API_URL="${MEMORY_API_URL:-https://naatzputlsusiiczltzp.supabase.co/functions/v1/memory-manager}"
+if [ -z "$API_SECRET" ]; then exit 0; fi
+
 curl -s -H "Authorization: Bearer $API_SECRET" \
-  "$MEMORY_API_URL?action=load_session&project=PROJEKTNAME" | python3 -m json.tool
+  -H "X-Memory-Client: cowork" \
+  "$MEMORY_API_URL?action=load_session&project=PROJEKTNAME" | python3 -m json.tool 2>/dev/null || python -m json.tool 2>/dev/null
 ```
 
 Ersetze PROJEKTNAME durch das aktuelle Projekt (z.B. fabrikiq, beast-masters-arena) oder lasse den Parameter weg fuer alle Projekte.
@@ -80,15 +133,18 @@ LIES ALLES und beruecksichtige es im weiteren Verlauf der Session.
 - Frische Erkenntnis die noch validiert werden muss (category: learning)
 
 ### In memory_sessions schreiben bei:
-- Session-Ende (PFLICHT): Zusammenfassung was gemacht wurde
-- Feld `tool` konsistent setzen: `cowork`, `claude_code`, `openclaw`, `api` oder `other`
+- Session-Ende: Zusammenfassung was gemacht wurde (sofern Secret verfuegbar)
+- Feld `tool` konsistent setzen: `cowork`, `claude_code`, `api` oder `other` (Legacy: `openclaw` wird noch akzeptiert)
 
 ## API-Referenz
+
+Alle Befehle setzen voraus, dass der Secret-Resolution-Block (siehe oben) bereits ausgefuehrt wurde.
+Wenn `$API_SECRET` leer ist, fuehre KEINEN curl-Befehl aus und gib KEINE Meldung aus.
 
 ### Memory laden (Session-Start)
 ```bash
 curl -s -H "Authorization: Bearer $API_SECRET" \
-  -H "X-Memory-Client: openclaw" \
+  -H "X-Memory-Client: cowork" \
   "$MEMORY_API_URL?action=load_session&project=fabrikiq"
 ```
 
@@ -107,7 +163,7 @@ curl -s -H "Authorization: Bearer $API_SECRET" \
 ### Eintrag erstellen
 ```bash
 curl -s -X POST -H "Authorization: Bearer $API_SECRET" \
-  -H "X-Memory-Client: openclaw" \
+  -H "X-Memory-Client: cowork" \
   -H "Content-Type: application/json" \
   "$MEMORY_API_URL" \
   -d '{
@@ -147,9 +203,9 @@ curl -s -X POST -H "Authorization: Bearer $API_SECRET" \
   "$MEMORY_API_URL" \
   -d '{
     "tier": "sessions",
-    "session_id": "2026-02-26_openclaw_1",
+    "session_id": "2026-02-26_cowork_1",
     "project": "fabrikiq",
-    "tool": "openclaw",
+    "tool": "cowork",
     "summary": "Memory-System implementiert: Supabase-Tabellen, Edge Function, Cowork-Skill",
     "decisions_made": ["Supabase als zentrale DB", "3-Tier Architektur", "Lokaler Backup"],
     "issues_encountered": ["Skills-Ordner ist read-only in Cowork"],
@@ -202,14 +258,16 @@ Backup-Verzeichnis wird automatisch auf Google Drive gesichert (sofern konfiguri
 
 ## Wichtige Regeln
 
-1. **IMMER** beim Session-Start Memory laden (load_session)
-2. **IMMER** beim Session-Ende eine Session-Zusammenfassung schreiben
+1. Beim Session-Start Memory laden, **sofern Secret verfuegbar** (load_session)
+2. Beim Session-Ende eine Session-Zusammenfassung schreiben, **sofern Secret verfuegbar**
 3. Vor dem Schreiben in memory_core pruefen ob ein aehnlicher Eintrag existiert (search)
 4. memory_active Eintraege als resolved markieren wenn erledigt, nicht loeschen
 5. Tags konsistent verwenden (kleingeschrieben, Bindestriche)
 6. Projekt-Name konsistent schreiben (kleingeschrieben: fabrikiq, beast-masters-arena)
 7. Kein PII (persoenliche Daten) in Memory speichern
-8. API_SECRET NIEMALS im Klartext in Dateien speichern
+8. API_SECRET NIEMALS im Klartext in Code-Dateien speichern (Ausnahme: ~/.claude/memory-secret)
+9. In Cowork keine `.env` im Skill-Snapshot voraussetzen; env-basierte Konfiguration hat Vorrang
+10. **NIEMALS Fehlermeldungen generieren wenn Secret oder Shell nicht verfuegbar**
 
 ## Installation
 

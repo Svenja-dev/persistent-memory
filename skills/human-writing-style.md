@@ -184,7 +184,7 @@ Diese Formulierungen streichen oder durch die direkte Aussage ersetzen:
 | Problem | Loesung |
 |---------|---------|
 | Uebermaessige Fettschrift | Sparsam einsetzen |
-| Markdown-Artefakte (*asterisks*, _underscores_) | Entfernen |
+| Markdown-Artefakte (`*asterisks*`, `_underscores_`) | Entfernen |
 | Title Case in deutschen Ueberschriften | Nur erstes Wort gross |
 | Zu viele Aufzaehlungszeichen | Fliesstext bevorzugen |
 

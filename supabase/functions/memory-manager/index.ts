@@ -216,7 +216,7 @@ async function handleSearch(query: string, project?: string, semantic?: boolean)
       const { data, error } = await supabase.rpc("search_memory_semantic", {
         query_embedding: JSON.stringify(queryEmbedding),
         match_threshold: 0.5,
-        match_count: 10,
+        match_count: 20,
         filter_project: project || null,
       });
 
@@ -335,7 +335,7 @@ async function handlePost(body: any) {
 
     if (error) throw error;
     if (!entries || entries.length === 0) {
-      return { success: true, action: "backfill_embeddings", processed: 0, message: "No entries without embeddings" };
+      return { success: true, action: "backfill_embeddings", tier, processed: 0, errors: 0 };
     }
 
     let processed = 0;
@@ -361,7 +361,6 @@ async function handlePost(body: any) {
       tier,
       processed,
       errors,
-      failed_in_batch: entries.length - processed,
     };
   }
 

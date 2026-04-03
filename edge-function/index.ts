@@ -4,14 +4,19 @@
 // ENDPOINTS:
 // GET  /functions/v1/memory-manager?tier=core&project=fabrikiq
 // GET  /functions/v1/memory-manager?action=search&q=flutter&project=fabrikiq
+// GET  /functions/v1/memory-manager?action=search&q=flutter&semantic=true  (Vector Search)
 // GET  /functions/v1/memory-manager?action=backup
 // GET  /functions/v1/memory-manager?action=load_session&project=fabrikiq  (Session-Start: loads core + active)
-// POST /functions/v1/memory-manager  (create or update entry)
+// POST /functions/v1/memory-manager  (create or update entry, auto-generates embedding if OPENAI_API_KEY set)
+// POST /functions/v1/memory-manager  { "action": "backfill_embeddings", "tier": "core" }  (Backfill)
 // DELETE /functions/v1/memory-manager?tier=active&id=<uuid>
 //
 // SECURITY: Requires Bearer token.
 // Supports client-specific secrets via X-Memory-Client / ?client=
 // with legacy fallback to API_SECRET.
+//
+// VECTOR SEARCH: Optional. Requires OPENAI_API_KEY env var + pgvector extension.
+// Without OPENAI_API_KEY, everything works as before (ILIKE search).
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -19,6 +24,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const API_SECRET = Deno.env.get("API_SECRET")?.trim();
+const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY")?.trim();
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
@@ -39,6 +45,47 @@ const CLIENT_SECRET_ENV = {
 
 type ClientName = keyof typeof CLIENT_SECRET_ENV;
 const VALID_CLIENTS = Object.keys(CLIENT_SECRET_ENV) as ClientName[];
+
+// =============================================================================
+// Embedding Helper (inline, no separate import needed for Edge Functions)
+// =============================================================================
+
+async function generateEmbedding(text: string): Promise<number[] | null> {
+  if (!OPENAI_API_KEY) return null;
+  if (!text || text.trim().length === 0) return null;
+
+  const truncated = text.slice(0, 32000);
+
+  try {
+    const response = await fetch("https://api.openai.com/v1/embeddings", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "text-embedding-3-small",
+        input: truncated,
+        dimensions: 1536,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error(`Embedding API error: ${response.status} ${response.statusText}`);
+      return null;
+    }
+
+    const result = await response.json();
+    return result.data?.[0]?.embedding || null;
+  } catch (error) {
+    console.error("Embedding generation failed:", error);
+    return null;
+  }
+}
+
+// =============================================================================
+// Auth (unchanged)
+// =============================================================================
 
 function getBearerToken(req: Request): string | null {
   const authHeader = req.headers.get("Authorization");
@@ -130,14 +177,13 @@ function getTableName(tier: Tier): string {
   return `memory_${tier}`;
 }
 
-// ---- GET handlers ----
+// =============================================================================
+// GET handlers
+// =============================================================================
 
 async function handleLoadSession(project?: string) {
-  // Load everything needed for a session start: core + unresolved active
   const coreQuery = supabase.from("memory_core").select("*");
   const activeQuery = supabase.from("memory_active").select("*").eq("resolved", false);
-
-  // Last 5 sessions for context
   const sessionsQuery = supabase.from("memory_sessions").select("*")
     .order("created_at", { ascending: false }).limit(5);
 
@@ -155,13 +201,43 @@ async function handleLoadSession(project?: string) {
     success: true,
     action: "load_session",
     project: project || "all",
+    vector_search_enabled: !!OPENAI_API_KEY,
     core: { count: coreResult.data?.length || 0, data: coreResult.data || [] },
     active: { count: activeResult.data?.length || 0, data: activeResult.data || [] },
     recent_sessions: { count: sessionsResult.data?.length || 0, data: sessionsResult.data || [] },
   };
 }
 
-async function handleSearch(query: string, project?: string) {
+async function handleSearch(query: string, project?: string, semantic?: boolean) {
+  // Semantic search: generate embedding for query, then use RPC
+  if (semantic && OPENAI_API_KEY) {
+    const queryEmbedding = await generateEmbedding(query);
+    if (queryEmbedding) {
+      const { data, error } = await supabase.rpc("search_memory_semantic", {
+        query_embedding: JSON.stringify(queryEmbedding),
+        match_threshold: 0.5,
+        match_count: 20,
+        filter_project: project || null,
+      });
+
+      if (error) {
+        console.error("Semantic search failed, falling back to ILIKE:", error);
+        // Fall through to ILIKE search below
+      } else {
+        return {
+          success: true,
+          action: "search",
+          search_type: "semantic",
+          query,
+          project: project || "all",
+          count: data?.length || 0,
+          results: data || [],
+        };
+      }
+    }
+  }
+
+  // ILIKE search (default, or fallback if semantic fails)
   const { data, error } = await supabase.rpc("search_memory", {
     search_term: query,
     filter_project: project || null,
@@ -172,6 +248,7 @@ async function handleSearch(query: string, project?: string) {
   return {
     success: true,
     action: "search",
+    search_type: "text",
     query,
     project: project || "all",
     count: data?.length || 0,
@@ -221,10 +298,71 @@ async function handleGet(tier: Tier, params: URLSearchParams) {
   return { success: true, tier, count: data?.length || 0, data: data || [] };
 }
 
-// ---- POST handler ----
+// =============================================================================
+// POST handler (with optional embedding generation)
+// =============================================================================
 
 async function handlePost(body: any) {
   const { tier, action: bodyAction, ...entry } = body;
+
+  // Allowlist: nur bekannte Felder an die DB weiterleiten
+  const ALLOWED_FIELDS = [
+    'id', 'project', 'category', 'title', 'content', 'tags',
+    'importance', 'priority', 'session_id', 'tool', 'summary',
+    'decisions_made', 'issues_encountered', 'files_changed',
+  ];
+  const sanitizedEntry: Record<string, unknown> = {};
+  for (const key of ALLOWED_FIELDS) {
+    if (key in entry) {
+      sanitizedEntry[key] = entry[key];
+    }
+  }
+
+  // Backfill embeddings action
+  if (bodyAction === "backfill_embeddings") {
+    if (!OPENAI_API_KEY) {
+      return { success: false, error: "OPENAI_API_KEY not configured" };
+    }
+    if (!tier || !["core", "active"].includes(tier)) {
+      return { success: false, error: "Backfill requires tier: core or active" };
+    }
+    const table = getTableName(tier as Tier);
+    const { data: entries, error } = await supabase
+      .from(table)
+      .select("id, title, content")
+      .is("embedding", null)
+      .limit(50);
+
+    if (error) throw error;
+    if (!entries || entries.length === 0) {
+      return { success: true, action: "backfill_embeddings", tier, processed: 0, errors: 0 };
+    }
+
+    let processed = 0;
+    let errors = 0;
+    for (const e of entries) {
+      const embedding = await generateEmbedding(`${e.title} ${e.content}`);
+      if (embedding) {
+        const { error: updateError } = await supabase
+          .from(table)
+          .update({ embedding })
+          .eq("id", e.id);
+        if (updateError) errors++;
+        else processed++;
+      } else {
+        errors++;
+      }
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+
+    return {
+      success: true,
+      action: "backfill_embeddings",
+      tier,
+      processed,
+      errors,
+    };
+  }
 
   if (!tier || !VALID_TIERS.includes(tier)) {
     return { success: false, error: `Invalid tier. Valid: ${VALID_TIERS.join(", ")}` };
@@ -232,35 +370,56 @@ async function handlePost(body: any) {
 
   const table = getTableName(tier);
 
+  // Generate embedding for core and active entries (not sessions)
+  if (OPENAI_API_KEY && (tier === "core" || tier === "active") && sanitizedEntry.title && sanitizedEntry.content) {
+    const embedding = await generateEmbedding(`${sanitizedEntry.title} ${sanitizedEntry.content}`);
+    if (embedding) {
+      sanitizedEntry.embedding = embedding;
+    }
+  }
+
   // Upsert: if id is provided, update; otherwise insert
-  if (entry.id) {
+  if (sanitizedEntry.id) {
     const { data, error } = await supabase
       .from(table)
-      .update(entry)
-      .eq("id", entry.id)
+      .update(sanitizedEntry)
+      .eq("id", sanitizedEntry.id)
       .select()
       .single();
 
     if (error) throw error;
-    return { success: true, action: "updated", tier, data };
+    return {
+      success: true,
+      action: "updated",
+      tier,
+      embedding_generated: !!sanitizedEntry.embedding,
+      data,
+    };
   } else {
     const { data, error } = await supabase
       .from(table)
-      .insert(entry)
+      .insert(sanitizedEntry)
       .select()
       .single();
 
     if (error) throw error;
-    return { success: true, action: "created", tier, data };
+    return {
+      success: true,
+      action: "created",
+      tier,
+      embedding_generated: !!sanitizedEntry.embedding,
+      data,
+    };
   }
 }
 
-// ---- DELETE handler ----
+// =============================================================================
+// DELETE handler (unchanged)
+// =============================================================================
 
 async function handleDelete(tier: Tier, id: string) {
   const table = getTableName(tier);
 
-  // Soft-delete for active: mark as resolved instead of deleting
   if (tier === "active") {
     const { data, error } = await supabase
       .from(table)
@@ -273,13 +432,14 @@ async function handleDelete(tier: Tier, id: string) {
     return { success: true, action: "resolved", tier, data };
   }
 
-  // Hard delete for core and sessions
   const { error } = await supabase.from(table).delete().eq("id", id);
   if (error) throw error;
   return { success: true, action: "deleted", tier, id };
 }
 
-// ---- Main handler ----
+// =============================================================================
+// Main handler
+// =============================================================================
 
 serve(async (req) => {
   const requestId = crypto.randomUUID().slice(0, 8);
@@ -308,7 +468,8 @@ serve(async (req) => {
           JSON.stringify({ error: "Missing 'q' parameter for search" }),
           { status: 400, headers }
         );
-        result = await handleSearch(q, project);
+        const semantic = url.searchParams.get("semantic") === "true";
+        result = await handleSearch(q, project, semantic);
       } else if (action === "backup") {
         result = await handleBackup();
       } else {
@@ -320,8 +481,10 @@ serve(async (req) => {
               usage: {
                 load_session: "GET ?action=load_session&project=fabrikiq",
                 search: "GET ?action=search&q=flutter",
+                search_semantic: "GET ?action=search&q=wie+loese+ich+OEE+Problem&semantic=true",
                 backup: "GET ?action=backup",
                 list: "GET ?tier=core&project=fabrikiq&category=pattern",
+                backfill: "POST { action: 'backfill_embeddings', tier: 'core' }",
               },
             }),
             { status: 400, headers }

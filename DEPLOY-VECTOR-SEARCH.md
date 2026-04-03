@@ -1,5 +1,10 @@
 # Vector Search Deploy-Anleitung
 
+> **Umgebungsvariable**: `MEMORY_API_URL` ist standardmaessig
+> `https://naatzputlsusiiczltzp.supabase.co/functions/v1/memory-manager`.
+> Alle curl-Beispiele nutzen `$MEMORY_API_URL` -- stelle sicher, dass die Variable gesetzt ist,
+> oder ersetze sie durch die vollstaendige URL.
+
 ## Was sich aendert
 
 - Neue Spalte `embedding` auf memory_core und memory_active (nullable, bricht nichts)
@@ -12,47 +17,66 @@ Alles ist abwaertskompatibel. Ohne OPENAI_API_KEY funktioniert alles wie bisher.
 
 ---
 
-## Schritt 1: pgvector Extension aktivieren (Supabase Dashboard)
+## Voraussetzungen
 
-1. Oeffne https://supabase.com/dashboard
-2. Projekt auswaehlen
-3. Database -> Extensions
-4. Suche nach "vector"
-5. Klicke "Enable"
+- **Supabase CLI** installiert und eingeloggt (`supabase login`)
+- **Projektverknuepfung**: `supabase link --project-ref naatzputlsusiiczltzp` (einmalig)
+- **OpenAI API Key** fuer Embedding-Generierung (optional, ohne Key funktioniert alles weiter)
+- **Umgebungsvariablen** in der Shell:
+  ```bash
+  export API_SECRET="<dein-api-secret>"
+  export MEMORY_API_URL="https://naatzputlsusiiczltzp.supabase.co/functions/v1/memory-manager"
+  ```
 
-## Schritt 2: Migration ausfuehren (SQL Editor)
+---
 
-1. Im Dashboard: SQL Editor -> New Query
-2. Kopiere den Inhalt von:
-   `supabase/migrations/20260318000000_add_vector_search.sql`
-3. Ausfuehren (Run)
-4. Sollte ohne Fehler durchlaufen
+## Schritt 1: Migration ausfuehren
 
-## Schritt 3: OPENAI_API_KEY als Secret setzen
-
-1. Im Dashboard: Edge Functions -> memory-manager -> Settings (oder Project Settings -> Edge Functions)
-2. Neues Secret: `OPENAI_API_KEY` = dein OpenAI API Key
-3. Speichern
-
-Kosten: text-embedding-3-small kostet $0.02 pro 1M Tokens.
-Bei 50 Eintraegen/Tag mit je ~200 Woertern = ~$0.15/Monat.
-
-## Schritt 4: Edge Function redeployen
-
-### Option A: Supabase CLI (empfohlen)
+Die Migration `supabase/migrations/20260318000000_add_vector_search.sql` aktiviert pgvector,
+fuegt die Embedding-Spalten hinzu und erstellt die Suchfunktionen.
 
 ```bash
-cd C:\Projekte\persistent-memory
+cd C:/Users/Anwender/projekte/persistent-memory
+supabase db push
+```
+
+Das fuehrt alle noch nicht angewandten Migrations aus. Die Migration enthaelt
+`CREATE EXTENSION IF NOT EXISTS vector`, daher muss pgvector NICHT manuell im Dashboard
+aktiviert werden.
+
+Pruefe nach dem Push, ob die Migration erfolgreich war:
+
+```bash
+supabase migration list
+```
+
+Die Migration `20260318000000_add_vector_search` sollte als applied erscheinen.
+
+## Schritt 2: OPENAI_API_KEY als Secret setzen
+
+```bash
+supabase secrets set OPENAI_API_KEY=sk-...
+```
+
+Pruefe, ob das Secret gesetzt ist:
+
+```bash
+supabase secrets list
+```
+
+`OPENAI_API_KEY` sollte in der Liste erscheinen (Wert wird nicht angezeigt).
+
+**Kosten**: text-embedding-3-small kostet $0.02 pro 1M Tokens.
+Bei 50 Eintraegen/Tag mit je ~200 Woertern = ~$0.15/Monat.
+
+## Schritt 3: Edge Function deployen
+
+```bash
+cd C:/Users/Anwender/projekte/persistent-memory
 supabase functions deploy memory-manager --no-verify-jwt
 ```
 
-### Option B: Dashboard
-
-1. Edge Functions -> memory-manager
-2. Code ersetzen mit dem neuen `index.ts`
-3. Deploy
-
-## Schritt 5: Testen
+## Schritt 4: Testen
 
 ### Test 1: Neuen Eintrag schreiben (sollte Embedding generieren)
 
@@ -60,7 +84,7 @@ supabase functions deploy memory-manager --no-verify-jwt
 curl -s -X POST \
   -H "Authorization: Bearer $API_SECRET" \
   -H "Content-Type: application/json" \
-  "https://naatzputlsusiiczltzp.supabase.co/functions/v1/memory-manager" \
+  "$MEMORY_API_URL" \
   -d '{
     "tier": "active",
     "project": "test",
@@ -71,44 +95,92 @@ curl -s -X POST \
   }'
 ```
 
-Erwartete Antwort: `"embedding_generated": true`
+Erwartete Antwort enthaelt:
+
+```json
+{
+  "success": true,
+  "action": "created",
+  "tier": "active",
+  "embedding_generated": true,
+  "data": { ... }
+}
+```
+
+Wenn `OPENAI_API_KEY` nicht gesetzt ist, kommt `"embedding_generated": false` -- das ist kein Fehler.
 
 ### Test 2: Semantische Suche
 
 ```bash
 curl -s -H "Authorization: Bearer $API_SECRET" \
-  "https://naatzputlsusiiczltzp.supabase.co/functions/v1/memory-manager?action=search&q=Embedding+testen&semantic=true"
+  "$MEMORY_API_URL?action=search&q=Embedding+testen&semantic=true"
 ```
 
-Erwartete Antwort: `"search_type": "semantic"`, der Test-Eintrag sollte gefunden werden.
+Erwartete Antwort:
 
-### Test 3: Bestehende Suche funktioniert noch
+```json
+{
+  "success": true,
+  "action": "search",
+  "search_type": "semantic",
+  "query": "Embedding testen",
+  "count": 1,
+  "results": [ ... ]
+}
+```
+
+Der Test-Eintrag aus Test 1 sollte in den Ergebnissen erscheinen.
+
+### Test 3: Bestehende Textsuche funktioniert noch
 
 ```bash
 curl -s -H "Authorization: Bearer $API_SECRET" \
-  "https://naatzputlsusiiczltzp.supabase.co/functions/v1/memory-manager?action=search&q=test"
+  "$MEMORY_API_URL?action=search&q=test"
 ```
 
-Sollte wie bisher funktionieren (ILIKE, `"search_type": "text"`).
+Erwartete Antwort (ohne `?semantic=true`):
 
-## Schritt 6: Backfill bestehender Eintraege (optional)
+```json
+{
+  "success": true,
+  "action": "search",
+  "search_type": "text",
+  "query": "test",
+  "count": 1,
+  "results": [ ... ]
+}
+```
 
-Fuer bestehende Memory-Eintraege ohne Embedding:
+## Schritt 5: Backfill bestehender Eintraege (optional)
+
+Fuer bestehende Memory-Eintraege ohne Embedding. Verarbeitet max 50 Eintraege pro Aufruf.
 
 ```bash
-# Core-Eintraege (max 50 pro Aufruf)
+# Core-Eintraege
 curl -s -X POST \
   -H "Authorization: Bearer $API_SECRET" \
   -H "Content-Type: application/json" \
-  "https://naatzputlsusiiczltzp.supabase.co/functions/v1/memory-manager" \
+  "$MEMORY_API_URL" \
   -d '{"action": "backfill_embeddings", "tier": "core"}'
 
 # Active-Eintraege
 curl -s -X POST \
   -H "Authorization: Bearer $API_SECRET" \
   -H "Content-Type: application/json" \
-  "https://naatzputlsusiiczltzp.supabase.co/functions/v1/memory-manager" \
+  "$MEMORY_API_URL" \
   -d '{"action": "backfill_embeddings", "tier": "active"}'
+```
+
+Erwartete Antwort:
+
+```json
+{
+  "success": true,
+  "action": "backfill_embeddings",
+  "tier": "core",
+  "processed": 12,
+  "errors": 0
+}
 ```
 
 Mehrfach ausfuehren bis `"processed": 0`.
@@ -128,4 +200,9 @@ ALTER TABLE memory_core DROP COLUMN IF EXISTS embedding;
 ALTER TABLE memory_active DROP COLUMN IF EXISTS embedding;
 ```
 
-Edge Function: Alte Version aus Git wiederherstellen und redeployen.
+Edge Function: Alte Version aus Git wiederherstellen und redeployen:
+
+```bash
+git checkout main -- supabase/functions/memory-manager/
+supabase functions deploy memory-manager --no-verify-jwt
+```

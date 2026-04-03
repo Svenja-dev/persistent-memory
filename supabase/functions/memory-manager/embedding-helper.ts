@@ -7,30 +7,10 @@
  *
  * Kosten: ~$0.02 pro 1M Tokens = praktisch kostenlos bei normaler Nutzung
  *
- * EINBAU in index.ts:
- * 1. Import: import { generateEmbedding } from './embedding-helper.ts'
- * 2. Beim Schreiben (write action), nach dem INSERT:
- *    const embedding = await generateEmbedding(title + ' ' + content)
- *    if (embedding) {
- *      await supabase
- *        .from(table)
- *        .update({ embedding })
- *        .eq('id', insertedId)
- *    }
- * 3. Bei Suche (search action), neuen Parameter 'semantic' akzeptieren:
- *    if (semantic && searchTerm) {
- *      const queryEmbedding = await generateEmbedding(searchTerm)
- *      if (queryEmbedding) {
- *        const { data } = await supabase.rpc('search_memory_semantic', {
- *          query_embedding: queryEmbedding,
- *          match_threshold: 0.5,
- *          match_count: 10,
- *          filter_project: project || null
- *        })
- *        return new Response(JSON.stringify(data), { headers: corsHeaders })
- *      }
- *    }
- *    // Fallback zu bestehender ILIKE-Suche
+ * Eingebunden in index.ts:
+ * - handlePost: Embedding nach Insert/Update generieren
+ * - handleSearch: ?semantic=true fuer Vector Search
+ * - backfill_embeddings: Bestehende Eintraege nachtraeglich mit Embeddings versehen
  */
 
 const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY')
@@ -98,8 +78,11 @@ export async function backfillEmbeddings(
     .is('embedding', null)
     .limit(50)
 
-  if (error || !entries) {
+  if (error) {
     return { processed: 0, errors: 1 }
+  }
+  if (!entries || entries.length === 0) {
+    return { processed: 0, errors: 0 }
   }
 
   let processed = 0

@@ -2,8 +2,8 @@
 -- Migration: 20260318000000_add_vector_search.sql
 -- Fuegt semantische Suche via pgvector hinzu (zusaetzlich zu bestehender ILIKE-Suche)
 --
--- Voraussetzung: pgvector Extension muss in Supabase aktiviert sein
--- (Dashboard -> Database -> Extensions -> vector -> Enable)
+-- Voraussetzung: Supabase-Projekt mit pgvector-Support
+-- (Extension wird automatisch per CREATE EXTENSION aktiviert)
 --
 -- Kosten: ~$0.0001 pro Embedding (text-embedding-3-small via OpenAI)
 -- Bei 50 Eintraegen/Tag = ~$0.15/Monat
@@ -29,6 +29,10 @@ ALTER TABLE memory_active
 -- =============================================================================
 -- 3. Indexes fuer schnelle Vector-Suche (IVFFlat, guter Kompromiss)
 -- Bei < 10.000 Eintraegen reicht auch sequentiell, aber Index schadet nicht
+--
+-- HINWEIS: IVFFlat-Index auf leerer Tabelle ist ineffektiv.
+-- Nach dem Backfill: REINDEX INDEX idx_memory_core_embedding;
+-- Nach dem Backfill: REINDEX INDEX idx_memory_active_embedding;
 -- =============================================================================
 CREATE INDEX IF NOT EXISTS idx_memory_core_embedding
   ON memory_core USING ivfflat (embedding vector_cosine_ops)
@@ -104,6 +108,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 -- =============================================================================
 -- 5. Hybride Suche: Erst semantisch, dann ILIKE als Fallback
 -- Nutzt Vector Search wenn Embedding vorhanden, sonst bestehende Textsuche
+-- Ergebnis ist auf match_count begrenzt (semantisch priorisiert, Text fuellt auf)
 -- =============================================================================
 CREATE OR REPLACE FUNCTION search_memory_hybrid(
   search_term TEXT,
@@ -125,31 +130,31 @@ RETURNS TABLE (
   created_at TIMESTAMPTZ
 ) AS $$
 BEGIN
-  -- Wenn Embedding vorhanden: Semantische Suche
-  IF query_embedding IS NOT NULL THEN
-    RETURN QUERY
+  RETURN QUERY
+  SELECT * FROM (
+    -- Semantische Ergebnisse zuerst (hoehere Prioritaet)
     SELECT
       s.source, s.id, s.project, s.category, s.title, s.content, s.tags,
       s.similarity, 'semantic'::TEXT AS search_type, s.created_at
-    FROM search_memory_semantic(query_embedding, match_threshold, match_count, filter_project) s;
-  END IF;
+    FROM search_memory_semantic(query_embedding, match_threshold, match_count, filter_project) s
+    WHERE query_embedding IS NOT NULL
 
-  -- Immer auch ILIKE-Suche (faengt Treffer ohne Embedding auf)
-  IF search_term IS NOT NULL AND search_term != '' THEN
-    RETURN QUERY
+    UNION ALL
+
+    -- Text-Ergebnisse, Duplikate aus semantischer Suche ausgeschlossen
     SELECT
       sm.source, sm.id, sm.project, sm.category, sm.title, sm.content, sm.tags,
       0.0::FLOAT AS similarity, 'text'::TEXT AS search_type, sm.created_at
     FROM search_memory(search_term, filter_project) sm
-    -- Duplikate vermeiden wenn beides laeuft
-    WHERE NOT EXISTS (
-      SELECT 1 FROM search_memory_semantic(
-        COALESCE(query_embedding, '[]'::vector(1536)),
-        match_threshold, match_count, filter_project
-      ) ss WHERE ss.id = sm.id
-    )
-    LIMIT match_count;
-  END IF;
+    WHERE search_term IS NOT NULL AND search_term != ''
+      AND NOT EXISTS (
+        SELECT 1 FROM search_memory_semantic(
+          query_embedding, match_threshold, match_count, filter_project
+        ) ss WHERE ss.id = sm.id AND query_embedding IS NOT NULL
+      )
+  ) combined
+  ORDER BY similarity DESC
+  LIMIT match_count;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 

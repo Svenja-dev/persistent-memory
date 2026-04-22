@@ -1,15 +1,27 @@
 // Supabase Edge Function: memory-manager
 // CRUD operations for persistent memory across Claude sessions
 //
+// TIERS: core, active, sessions, improvements
+//
 // ENDPOINTS:
 // GET  /functions/v1/memory-manager?tier=core&project=fabrikiq
+// GET  /functions/v1/memory-manager?tier=improvements&status=experimenting
 // GET  /functions/v1/memory-manager?action=search&q=flutter&project=fabrikiq
 // GET  /functions/v1/memory-manager?action=search&q=flutter&semantic=true  (Vector Search)
 // GET  /functions/v1/memory-manager?action=backup
-// GET  /functions/v1/memory-manager?action=load_session&project=fabrikiq  (Session-Start: loads core + active)
+// GET  /functions/v1/memory-manager?action=load_session&project=fabrikiq  (Session-Start: loads core + active + improvements)
 // POST /functions/v1/memory-manager  (create or update entry, auto-generates embedding if OPENAI_API_KEY set)
 // POST /functions/v1/memory-manager  { "action": "backfill_embeddings", "tier": "core" }  (Backfill)
-// DELETE /functions/v1/memory-manager?tier=active&id=<uuid>
+// DELETE /functions/v1/memory-manager?tier=active&id=<uuid>         (soft: resolved=true)
+// DELETE /functions/v1/memory-manager?tier=improvements&id=<uuid>   (soft: status=retired)
+// DELETE /functions/v1/memory-manager?tier=core&id=<uuid>           (hard delete)
+//
+// ERROR HANDLING:
+// - 400: Validation failure (missing fields, invalid enum, type error, invalid JSON) — body includes `field` and/or `pg_code`.
+// - 401: Missing/invalid bearer token.
+// - 404: N/A (no 404 from this function currently).
+// - 409: Unique constraint violation.
+// - 500: Actual server error only (unexpected exceptions). Never for bad payloads.
 //
 // SECURITY: Requires Bearer token.
 // Supports client-specific secrets via X-Memory-Client / ?client=
@@ -170,11 +182,139 @@ function validateApiKey(req: Request): Response | null {
   return null;
 }
 
-const VALID_TIERS = ["core", "active", "sessions"] as const;
+const VALID_TIERS = ["core", "active", "sessions", "improvements"] as const;
 type Tier = typeof VALID_TIERS[number];
 
 function getTableName(tier: Tier): string {
   return `memory_${tier}`;
+}
+
+// =============================================================================
+// Validation constants (mirror Postgres CHECK constraints)
+// =============================================================================
+
+const CORE_CATEGORIES = [
+  "preference", "architecture", "pattern", "context", "tool_config", "decision",
+  "user_profile", "user_values", "work_style", "communication",
+  "pain_points", "workflow_preference",
+] as const;
+
+const ACTIVE_CATEGORIES = [
+  "work_state", "open_question", "next_step", "blocker", "decision_pending", "learning",
+] as const;
+
+const IMPROVEMENT_CATEGORIES = [
+  "skill", "hook", "workflow", "process", "command", "agent",
+] as const;
+
+const IMPROVEMENT_STATUSES = [
+  "experimenting", "proven", "retired",
+] as const;
+
+const IMPORTANCE_VALUES = ["low", "normal", "high", "critical"] as const;
+const PRIORITY_VALUES = ["low", "normal", "high", "urgent"] as const;
+const SESSION_TOOLS = ["cowork", "claude_code", "api", "other", "openclaw"] as const;
+
+type ValidationError = { field: string; message: string };
+
+function validateCreatePayload(tier: Tier, entry: Record<string, unknown>): ValidationError | null {
+  // tags must be array (if present)
+  if ("tags" in entry && entry.tags !== null && entry.tags !== undefined && !Array.isArray(entry.tags)) {
+    return { field: "tags", message: "must be an array of strings" };
+  }
+
+  if (tier === "core") {
+    if (!entry.title || typeof entry.title !== "string") {
+      return { field: "title", message: "required string" };
+    }
+    if (!entry.content || typeof entry.content !== "string") {
+      return { field: "content", message: "required string" };
+    }
+    if (!entry.category || !CORE_CATEGORIES.includes(entry.category as typeof CORE_CATEGORIES[number])) {
+      return {
+        field: "category",
+        message: `must be one of: ${CORE_CATEGORIES.join(", ")}`,
+      };
+    }
+    if (entry.importance && !IMPORTANCE_VALUES.includes(entry.importance as typeof IMPORTANCE_VALUES[number])) {
+      return {
+        field: "importance",
+        message: `must be one of: ${IMPORTANCE_VALUES.join(", ")}`,
+      };
+    }
+  } else if (tier === "active") {
+    if (!entry.title || typeof entry.title !== "string") {
+      return { field: "title", message: "required string" };
+    }
+    if (!entry.content || typeof entry.content !== "string") {
+      return { field: "content", message: "required string" };
+    }
+    if (!entry.category || !ACTIVE_CATEGORIES.includes(entry.category as typeof ACTIVE_CATEGORIES[number])) {
+      return {
+        field: "category",
+        message: `must be one of: ${ACTIVE_CATEGORIES.join(", ")}`,
+      };
+    }
+    if (entry.priority && !PRIORITY_VALUES.includes(entry.priority as typeof PRIORITY_VALUES[number])) {
+      return {
+        field: "priority",
+        message: `must be one of: ${PRIORITY_VALUES.join(", ")}`,
+      };
+    }
+  } else if (tier === "sessions") {
+    if (!entry.session_id || typeof entry.session_id !== "string") {
+      return { field: "session_id", message: "required string" };
+    }
+    if (!entry.summary || typeof entry.summary !== "string") {
+      return { field: "summary", message: "required string" };
+    }
+    if (entry.tool && !SESSION_TOOLS.includes(entry.tool as typeof SESSION_TOOLS[number])) {
+      return {
+        field: "tool",
+        message: `must be one of: ${SESSION_TOOLS.join(", ")}`,
+      };
+    }
+  } else if (tier === "improvements") {
+    if (!entry.title || typeof entry.title !== "string") {
+      return { field: "title", message: "required string" };
+    }
+    if (!entry.category || !IMPROVEMENT_CATEGORIES.includes(entry.category as typeof IMPROVEMENT_CATEGORIES[number])) {
+      return {
+        field: "category",
+        message: `must be one of: ${IMPROVEMENT_CATEGORIES.join(", ")}`,
+      };
+    }
+    if (entry.status && !IMPROVEMENT_STATUSES.includes(entry.status as typeof IMPROVEMENT_STATUSES[number])) {
+      return {
+        field: "status",
+        message: `must be one of: ${IMPROVEMENT_STATUSES.join(", ")}`,
+      };
+    }
+    if ("related_files" in entry && entry.related_files !== null && entry.related_files !== undefined && !Array.isArray(entry.related_files)) {
+      return { field: "related_files", message: "must be an array of strings" };
+    }
+  }
+
+  return null;
+}
+
+function mapPgErrorToResponse(error: { code?: string; message?: string; details?: string } | null | undefined) {
+  if (!error?.code) return null;
+  const base = { pg_code: error.code, details: error.details || error.message };
+  switch (error.code) {
+    case "23502":
+      return { status: 400, body: { success: false, error: "Missing required field", ...base } };
+    case "23514":
+      return { status: 400, body: { success: false, error: "Invalid enum value (CHECK constraint)", ...base } };
+    case "22P02":
+      return { status: 400, body: { success: false, error: "Invalid data type", ...base } };
+    case "23505":
+      return { status: 409, body: { success: false, error: "Duplicate entry (unique constraint)", ...base } };
+    case "23503":
+      return { status: 400, body: { success: false, error: "Foreign key violation", ...base } };
+    default:
+      return null;
+  }
 }
 
 // =============================================================================
@@ -186,16 +326,23 @@ async function handleLoadSession(project?: string) {
   const activeQuery = supabase.from("memory_active").select("*").eq("resolved", false);
   const sessionsQuery = supabase.from("memory_sessions").select("*")
     .order("created_at", { ascending: false }).limit(5);
+  // improvements: only experimenting entries are "active"; proven/retired shown on demand
+  const improvementsQuery = supabase.from("memory_improvements").select("*")
+    .eq("status", "experimenting");
 
   if (project) {
     coreQuery.or(`project.eq.${project},project.is.null`);
     activeQuery.or(`project.eq.${project},project.is.null`);
     sessionsQuery.or(`project.eq.${project},project.is.null`);
+    improvementsQuery.or(`project.eq.${project},project.is.null`);
   }
 
-  const [coreResult, activeResult, sessionsResult] = await Promise.all([
-    coreQuery, activeQuery, sessionsQuery
+  const [coreResult, activeResult, sessionsResult, improvementsResult] = await Promise.all([
+    coreQuery, activeQuery, sessionsQuery, improvementsQuery,
   ]);
+
+  // memory_improvements table may not exist yet (pre-migration). Tolerate that.
+  const improvementsAvailable = !improvementsResult.error;
 
   return {
     success: true,
@@ -205,6 +352,9 @@ async function handleLoadSession(project?: string) {
     core: { count: coreResult.data?.length || 0, data: coreResult.data || [] },
     active: { count: activeResult.data?.length || 0, data: activeResult.data || [] },
     recent_sessions: { count: sessionsResult.data?.length || 0, data: sessionsResult.data || [] },
+    improvements: improvementsAvailable
+      ? { count: improvementsResult.data?.length || 0, data: improvementsResult.data || [] }
+      : { count: 0, data: [], unavailable: true },
   };
 }
 
@@ -280,6 +430,7 @@ async function handleGet(tier: Tier, params: URLSearchParams) {
   const project = params.get("project");
   const category = params.get("category");
   const tag = params.get("tag");
+  const status = params.get("status");
   const limit = Math.min(parseInt(params.get("limit") || "50", 10) || 50, 500);
 
   if (project) query = query.eq("project", project);
@@ -288,6 +439,9 @@ async function handleGet(tier: Tier, params: URLSearchParams) {
   if (tier === "active") {
     const showResolved = params.get("resolved") === "true";
     if (!showResolved) query = query.eq("resolved", false);
+  }
+  if (tier === "improvements" && status) {
+    query = query.eq("status", status);
   }
 
   query = query.order("created_at", { ascending: false }).limit(limit);
@@ -302,18 +456,32 @@ async function handleGet(tier: Tier, params: URLSearchParams) {
 // POST handler (with optional embedding generation)
 // =============================================================================
 
-async function handlePost(body: any) {
-  const { tier, action: bodyAction, ...entry } = body;
+type PostResult =
+  | { ok: true; value: Record<string, unknown> }
+  | { ok: false; status: number; body: Record<string, unknown> };
 
-  // Allowlist: nur bekannte Felder an die DB weiterleiten
+async function handlePost(body: any): Promise<PostResult> {
+  const { tier, action: bodyAction, ...entry } = body || {};
+
+  // Allowlist: only forward known fields to the DB. Fields per tier.
   const ALLOWED_FIELDS = [
+    // Shared
     'id', 'project', 'category', 'title', 'content', 'tags',
-    'importance', 'priority', 'session_id', 'tool', 'summary',
+    // core
+    'importance',
+    // active
+    'priority', 'resolved', 'resolved_at',
+    // sessions
+    'session_id', 'tool', 'summary',
     'decisions_made', 'issues_encountered', 'files_changed',
+    // improvements
+    'status', 'introduced_at', 'evidence', 'next_step',
+    'related_files', 'model_version_notes',
+    'last_used_at', 'use_count',
   ];
   const sanitizedEntry: Record<string, unknown> = {};
   for (const key of ALLOWED_FIELDS) {
-    if (key in entry) {
+    if (entry && key in entry) {
       sanitizedEntry[key] = entry[key];
     }
   }
@@ -321,10 +489,10 @@ async function handlePost(body: any) {
   // Backfill embeddings action
   if (bodyAction === "backfill_embeddings") {
     if (!OPENAI_API_KEY) {
-      return { success: false, error: "OPENAI_API_KEY not configured" };
+      return { ok: false, status: 400, body: { success: false, error: "OPENAI_API_KEY not configured" } };
     }
     if (!tier || !["core", "active"].includes(tier)) {
-      return { success: false, error: "Backfill requires tier: core or active" };
+      return { ok: false, status: 400, body: { success: false, error: "Backfill requires tier: core or active" } };
     }
     const table = getTableName(tier as Tier);
     const { data: entries, error } = await supabase
@@ -335,7 +503,7 @@ async function handlePost(body: any) {
 
     if (error) throw error;
     if (!entries || entries.length === 0) {
-      return { success: true, action: "backfill_embeddings", tier, processed: 0, errors: 0 };
+      return { ok: true, value: { success: true, action: "backfill_embeddings", tier, processed: 0, errors: 0 } };
     }
 
     let processed = 0;
@@ -356,25 +524,48 @@ async function handlePost(body: any) {
     }
 
     return {
-      success: true,
-      action: "backfill_embeddings",
-      tier,
-      processed,
-      errors,
+      ok: true,
+      value: { success: true, action: "backfill_embeddings", tier, processed, errors },
     };
   }
 
   if (!tier || !VALID_TIERS.includes(tier)) {
-    return { success: false, error: `Invalid tier. Valid: ${VALID_TIERS.join(", ")}` };
+    return {
+      ok: false,
+      status: 400,
+      body: { success: false, error: `Invalid tier. Valid: ${VALID_TIERS.join(", ")}` },
+    };
   }
 
-  const table = getTableName(tier);
+  // For updates (id present), skip strict validation — partial updates allowed.
+  // For inserts, enforce required fields + enum constraints upfront.
+  if (!sanitizedEntry.id) {
+    const validationError = validateCreatePayload(tier as Tier, sanitizedEntry);
+    if (validationError) {
+      return {
+        ok: false,
+        status: 400,
+        body: {
+          success: false,
+          error: `Validation failed: ${validationError.field} ${validationError.message}`,
+          field: validationError.field,
+        },
+      };
+    }
+  }
 
-  // Generate embedding for core and active entries (not sessions)
-  if (OPENAI_API_KEY && (tier === "core" || tier === "active") && sanitizedEntry.title && sanitizedEntry.content) {
-    const embedding = await generateEmbedding(`${sanitizedEntry.title} ${sanitizedEntry.content}`);
-    if (embedding) {
-      sanitizedEntry.embedding = embedding;
+  const table = getTableName(tier as Tier);
+
+  // Generate embedding for core, active, improvements (not sessions).
+  // Improvements use title + (next_step || evidence || '') since there is no content field.
+  if (OPENAI_API_KEY) {
+    if ((tier === "core" || tier === "active") && sanitizedEntry.title && sanitizedEntry.content) {
+      const embedding = await generateEmbedding(`${sanitizedEntry.title} ${sanitizedEntry.content}`);
+      if (embedding) sanitizedEntry.embedding = embedding;
+    } else if (tier === "improvements" && sanitizedEntry.title) {
+      const extra = (sanitizedEntry.next_step as string) || (sanitizedEntry.evidence as string) || "";
+      const embedding = await generateEmbedding(`${sanitizedEntry.title} ${extra}`.trim());
+      if (embedding) sanitizedEntry.embedding = embedding;
     }
   }
 
@@ -387,13 +578,20 @@ async function handlePost(body: any) {
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      const mapped = mapPgErrorToResponse(error);
+      if (mapped) return { ok: false, ...mapped };
+      throw error;
+    }
     return {
-      success: true,
-      action: "updated",
-      tier,
-      embedding_generated: !!sanitizedEntry.embedding,
-      data,
+      ok: true,
+      value: {
+        success: true,
+        action: "updated",
+        tier,
+        embedding_generated: !!sanitizedEntry.embedding,
+        data,
+      },
     };
   } else {
     const { data, error } = await supabase
@@ -402,13 +600,20 @@ async function handlePost(body: any) {
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      const mapped = mapPgErrorToResponse(error);
+      if (mapped) return { ok: false, ...mapped };
+      throw error;
+    }
     return {
-      success: true,
-      action: "created",
-      tier,
-      embedding_generated: !!sanitizedEntry.embedding,
-      data,
+      ok: true,
+      value: {
+        success: true,
+        action: "created",
+        tier,
+        embedding_generated: !!sanitizedEntry.embedding,
+        data,
+      },
     };
   }
 }
@@ -430,6 +635,19 @@ async function handleDelete(tier: Tier, id: string) {
 
     if (error) throw error;
     return { success: true, action: "resolved", tier, data };
+  }
+
+  if (tier === "improvements") {
+    // Soft-retire instead of hard-delete to preserve history
+    const { data, error } = await supabase
+      .from(table)
+      .update({ status: "retired" })
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return { success: true, action: "retired", tier, data };
   }
 
   const { error } = await supabase.from(table).delete().eq("id", id);
@@ -493,14 +711,29 @@ serve(async (req) => {
         result = await handleGet(tier, url.searchParams);
       }
     } else if (req.method === "POST") {
-      const body = await req.json();
-      result = await handlePost(body);
+      let body: unknown;
+      try {
+        body = await req.json();
+      } catch (_e) {
+        return new Response(
+          JSON.stringify({ success: false, error: "Invalid JSON body" }),
+          { status: 400, headers }
+        );
+      }
+      const postResult = await handlePost(body);
+      if (!postResult.ok) {
+        console.log(`[memory-manager] ${requestId} POST validation_error status=${postResult.status}`);
+        return new Response(JSON.stringify(postResult.body), { status: postResult.status, headers });
+      }
+      result = postResult.value;
     } else if (req.method === "DELETE") {
       const tier = url.searchParams.get("tier") as Tier;
       const id = url.searchParams.get("id");
-      if (!tier || !id) {
+      if (!tier || !VALID_TIERS.includes(tier) || !id) {
         return new Response(
-          JSON.stringify({ error: "Missing 'tier' and 'id' for DELETE" }),
+          JSON.stringify({
+            error: `Missing or invalid 'tier' and/or 'id' for DELETE. Valid tiers: ${VALID_TIERS.join(", ")}`,
+          }),
           { status: 400, headers }
         );
       }
@@ -517,9 +750,15 @@ serve(async (req) => {
     return new Response(JSON.stringify(result), { status: statusCode, headers });
 
   } catch (e) {
+    const err = e as { code?: string; message?: string; details?: string };
+    const mapped = mapPgErrorToResponse(err);
+    if (mapped) {
+      console.log(`[memory-manager] ${requestId} pg_error code=${err.code}`);
+      return new Response(JSON.stringify(mapped.body), { status: mapped.status, headers });
+    }
     console.error(`[memory-manager] ${requestId} error:`, e);
     return new Response(
-      JSON.stringify({ success: false, error: "Internal server error" }),
+      JSON.stringify({ success: false, error: "Internal server error", message: err.message }),
       { status: 500, headers }
     );
   }

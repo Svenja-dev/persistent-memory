@@ -16,7 +16,7 @@ for _P in "$HOME/.claude/memory-secret" "/mnt/c/Users/Anwender/.claude/memory-se
   [ -z "$_P" ] && continue
   [ -f "$_P" ] && _MS=$(cat "$_P" 2>/dev/null) && break
 done
-: ${API_SECRET:=${API_SECRET_CLAUDE_CODE:-$_MS}}
+: "${API_SECRET:=${API_SECRET_CLAUDE_CODE:-$_MS}}"
 export API_SECRET
 
 if [ -z "${MEMORY_API_URL:-}" ]; then

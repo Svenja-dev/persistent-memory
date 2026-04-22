@@ -407,11 +407,15 @@ async function handleSearch(query: string, project?: string, semantic?: boolean)
 }
 
 async function handleBackup() {
-  const [core, active, sessions] = await Promise.all([
+  const [core, active, sessions, improvements] = await Promise.all([
     supabase.from("memory_core").select("*"),
     supabase.from("memory_active").select("*"),
     supabase.from("memory_sessions").select("*").order("created_at", { ascending: false }).limit(100),
+    supabase.from("memory_improvements").select("*"),
   ]);
+
+  // improvements table may not exist yet (pre-migration); keep backup functional.
+  const improvementsAvailable = !improvements.error;
 
   return {
     success: true,
@@ -420,6 +424,9 @@ async function handleBackup() {
     core: { count: core.data?.length || 0, data: core.data || [] },
     active: { count: active.data?.length || 0, data: active.data || [] },
     sessions: { count: sessions.data?.length || 0, data: sessions.data || [] },
+    improvements: improvementsAvailable
+      ? { count: improvements.data?.length || 0, data: improvements.data || [] }
+      : { count: 0, data: [], unavailable: true },
   };
 }
 
@@ -756,9 +763,11 @@ serve(async (req) => {
       console.log(`[memory-manager] ${requestId} pg_error code=${err.code}`);
       return new Response(JSON.stringify(mapped.body), { status: mapped.status, headers });
     }
+    // Full error goes to logs only; response stays generic to avoid leaking internals.
+    // Clients can correlate via the X-Request-Id response header.
     console.error(`[memory-manager] ${requestId} error:`, e);
     return new Response(
-      JSON.stringify({ success: false, error: "Internal server error", message: err.message }),
+      JSON.stringify({ success: false, error: "Internal server error", request_id: requestId }),
       { status: 500, headers }
     );
   }

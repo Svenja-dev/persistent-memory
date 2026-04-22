@@ -8,6 +8,10 @@
 -- edge function and schema previously only knew core/active/sessions. This
 -- migration closes that gap. Safe to apply multiple times.
 
+-- pgvector must be available (enabled by the earlier vector-search migration).
+-- Include extensions schema on search_path so the "vector" type resolves.
+SET search_path = public, extensions;
+
 CREATE TABLE IF NOT EXISTS memory_improvements (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   project TEXT,                          -- nullable: NULL = cross-project (usually 'global')
@@ -33,9 +37,14 @@ CREATE TABLE IF NOT EXISTS memory_improvements (
   tags TEXT[] DEFAULT '{}',
   last_used_at TIMESTAMPTZ,
   use_count INTEGER NOT NULL DEFAULT 0,
+  embedding vector(1536),                -- semantic search; optional, populated by edge function if OPENAI_API_KEY is set
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- For already-created tables (re-running migration), ensure the column exists.
+ALTER TABLE memory_improvements
+  ADD COLUMN IF NOT EXISTS embedding vector(1536);
 
 -- Indexes for typical queries
 CREATE INDEX IF NOT EXISTS idx_memory_improvements_status ON memory_improvements(status);
@@ -43,6 +52,9 @@ CREATE INDEX IF NOT EXISTS idx_memory_improvements_category ON memory_improvemen
 CREATE INDEX IF NOT EXISTS idx_memory_improvements_project ON memory_improvements(project);
 CREATE INDEX IF NOT EXISTS idx_memory_improvements_tags ON memory_improvements USING GIN(tags);
 CREATE INDEX IF NOT EXISTS idx_memory_improvements_last_used ON memory_improvements(last_used_at DESC);
+CREATE INDEX IF NOT EXISTS idx_memory_improvements_embedding
+  ON memory_improvements USING ivfflat (embedding vector_cosine_ops)
+  WITH (lists = 10);
 
 -- RLS (service_role has full access, matching core/active/sessions)
 ALTER TABLE memory_improvements ENABLE ROW LEVEL SECURITY;

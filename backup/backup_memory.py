@@ -22,6 +22,7 @@ import urllib.request
 import urllib.error
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Mapping, Optional, Tuple
 
 # Konfiguration
 MEMORY_API_URL = "https://naatzputlsusiiczltzp.supabase.co/functions/v1/memory-manager"
@@ -29,16 +30,18 @@ BACKUP_DIR = Path(__file__).parent
 MAX_BACKUP_AGE_DAYS = 30
 
 
-def load_env():
-    """Lade API_SECRET aus .env Datei falls vorhanden."""
+def load_env() -> dict:
+    """Lese .env, ohne die hoeher priorisierte Prozessumgebung zu veraendern."""
+    values = {}
     env_file = BACKUP_DIR / ".env"
     if env_file.exists():
-        with open(env_file) as f:
+        with open(env_file, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if line and not line.startswith("#") and "=" in line:
                     key, value = line.split("=", 1)
-                    os.environ.setdefault(key.strip(), value.strip())
+                    values.setdefault(key.strip(), value.strip())
+    return values
 
 
 def load_secret_file() -> str:
@@ -50,33 +53,45 @@ def load_secret_file() -> str:
         return ""
 
 
-def get_api_secret():
-    """Hole API_SECRET aus Environment, .env oder ~/.claude/memory-secret."""
-    load_env()
-    secret = (
-        os.environ.get("API_SECRET_BACKUP")
-        or os.environ.get("API_SECRET")
-        or load_secret_file()
+def _select_credentials(values: Mapping[str, str]) -> Optional[Tuple[str, Optional[str]]]:
+    for key in ("API_SECRET_BACKUP", "API_SECRET"):
+        secret = values.get(key, "").strip()
+        if secret:
+            return secret, "backup" if key == "API_SECRET_BACKUP" else None
+    return None
+
+
+def get_api_credentials() -> Tuple[str, Optional[str]]:
+    """Hole Secret und Client-Zuordnung in der dokumentierten Quellenreihenfolge."""
+    credentials = (
+        _select_credentials(os.environ)
+        or _select_credentials(load_env())
+        or _select_credentials({"API_SECRET": load_secret_file()})
     )
-    if not secret:
+    if not credentials:
         print("FEHLER: Kein API-Secret gefunden.")
         print("Quellen: API_SECRET_BACKUP / API_SECRET (Environment), "
               f"{BACKUP_DIR / '.env'} oder {Path.home() / '.claude' / 'memory-secret'}")
         sys.exit(1)
-    return secret
+    return credentials
 
 
-def fetch_backup(api_secret: str) -> dict:
+def get_api_secret() -> str:
+    """Hole nur das Secret; Backup-Aufrufe nutzen zusaetzlich dessen Client-Zuordnung."""
+    return get_api_credentials()[0]
+
+
+def fetch_backup(api_secret: str, client: Optional[str] = None) -> dict:
     """Rufe den Backup-Endpoint auf und gib die Daten zurueck."""
     url = f"{MEMORY_API_URL}?action=backup"
-    req = urllib.request.Request(
-        url,
-        headers={
-            "Authorization": f"Bearer {api_secret}",
-            "X-Memory-Client": "backup",
-            "Content-Type": "application/json",
-        },
-    )
+    headers = {
+        "Authorization": f"Bearer {api_secret}",
+        "Content-Type": "application/json",
+    }
+    # Ein generischer/shared Key ist keinem bestimmten Client zugeordnet.
+    if client:
+        headers["X-Memory-Client"] = client
+    req = urllib.request.Request(url, headers=headers)
 
     try:
         with urllib.request.urlopen(req, timeout=30) as response:
@@ -140,10 +155,10 @@ def print_summary(data: dict, filepath: Path, size_kb: float, removed: int):
 
 
 def main():
-    api_secret = get_api_secret()
+    api_secret, client = get_api_credentials()
 
     print(f"Lade Memory-Backup von Supabase...")
-    data = fetch_backup(api_secret)
+    data = fetch_backup(api_secret, client)
 
     filepath, size_kb = save_backup(data)
     removed = cleanup_old_backups()

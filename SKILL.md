@@ -1,6 +1,6 @@
 ---
 name: persistent-memory
-description: Persistentes Memory-System ueber Supabase. Drei Schichten (Core/Active/Sessions) fuer projektuebergreifendes Wissen, aktuelle Arbeitsstaende und Session-Protokolle. Automatisches Laden bei Session-Start, Schreiben bei wichtigen Erkenntnissen, Backup in lokales Verzeichnis.
+description: Persistentes Memory-System ueber Supabase. Vier Schichten (Core/Active/Sessions/Improvements) fuer projektuebergreifendes Wissen, aktuelle Arbeitsstaende, Session-Protokolle und Verbesserungs-Experimente. Automatisches Laden bei Session-Start, Schreiben bei wichtigen Erkenntnissen, Backup in lokales Verzeichnis.
 license: MIT
 ---
 
@@ -29,14 +29,14 @@ Diese Regel hat VORRANG vor allen anderen Regeln in diesem Dokument.
 
 ## Uebersicht
 
-Dieses Skill steuert ein dreischichtiges Memory-System in Supabase:
+Dieses Skill steuert ein vierschichtiges Memory-System in Supabase:
 
 | Schicht | Tabelle | Zweck | Lebensdauer |
 |---------|---------|-------|-------------|
 | Core | memory_core | Praeferenzen, Architektur, Patterns, Entscheidungen | Langfristig (Monate/Jahre) |
 | Active | memory_active | Arbeitsstaende, offene Fragen, Blocker, naechste Schritte | Mittelfristig (Tage/Wochen) |
 | Sessions | memory_sessions | Session-Zusammenfassungen, was wurde gemacht | Kurzfristig (Protokoll) |
-| Improvements | memory_improvements | Experimente an Skills, Hooks, Workflows und deren Bewertung | Bis retired |
+| Improvements | memory_improvements | Experimente an Skills, Hooks, Workflows und deren Bewertung | Dauerhaft; auch retired bleibt erhalten |
 
 ## Secret Resolution (Multi-Pfad-Fallback)
 
@@ -139,9 +139,11 @@ LIES ALLES und beruecksichtige es im weiteren Verlauf der Session.
 - Feld `tool` konsistent setzen: `cowork`, `claude_code`, `api` oder `other` (Legacy: `openclaw` wird noch akzeptiert)
 
 ### In memory_improvements schreiben bei:
+
 - Ein Skill, Hook, Workflow, Prozess, Command oder Agent wird bewusst veraendert, um etwas zu verbessern (status: experimenting)
 - Das Experiment hat sich bewaehrt (status: proven) oder wurde verworfen (status: retired)
 - Pflichtfelder: `title`, `category` (skill, hook, workflow, process, command, agent); optional `status`, `evidence`, `next_step`, `project`
+- Fuer projektuebergreifende Experimente `project` beim Anlegen weglassen oder `null` setzen. `"global"` ist ein woertlicher Projektname und wird bei anderen Projekten nicht mitgeladen.
 
 ## API-Referenz
 
@@ -204,10 +206,14 @@ curl -s -X DELETE -H "Authorization: Bearer $API_SECRET" \
 ```
 
 ### Improvement anlegen oder bewerten
+
 ```bash
-curl -s -X POST -H "Authorization: Bearer $API_SECRET"   -H "Content-Type: application/json"   "$MEMORY_API_URL"   -d '{
+curl -s -X POST -H "Authorization: Bearer $API_SECRET" \
+  -H "Content-Type: application/json" \
+  "$MEMORY_API_URL" \
+  -d '{
     "tier": "improvements",
-    "project": "global",
+    "project": null,
     "category": "workflow",
     "title": "Review-Sandwich vor Go-Live",
     "status": "experimenting",
@@ -215,11 +221,14 @@ curl -s -X POST -H "Authorization: Bearer $API_SECRET"   -H "Content-Type: appli
     "next_step": "Nach 5 PRs bewerten"
   }'
 ```
+
 Status spaeter per POST mit `id` und `status: "proven"` setzen. DELETE auf `tier=improvements&id=...` setzt `status: "retired"` (kein Hard-Delete).
 
 ### Improvements lesen (gefiltert)
+
 ```bash
-curl -s -H "Authorization: Bearer $API_SECRET"   "$MEMORY_API_URL?tier=improvements&status=experimenting"
+curl -s -H "Authorization: Bearer $API_SECRET" \
+  "$MEMORY_API_URL?tier=improvements&status=experimenting"
 ```
 
 ### Session-Zusammenfassung schreiben
@@ -263,6 +272,7 @@ Backup-Verzeichnis wird automatisch auf Google Drive gesichert (sofern konfiguri
 ## Kategorien-Referenz
 
 ### memory_improvements Kategorien und Status
+
 | Kategorie | Bedeutung |
 |-----------|-----------|
 | skill | Aenderung an einer SKILL.md |

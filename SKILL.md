@@ -82,7 +82,10 @@ if [ -z "$API_SECRET" ]; then exit 0; fi
 
 Die Datei `memory-secret` enthaelt nur den rohen API-Key (eine Zeile, kein Newline noetig).
 
-Client-Hinweis pro Request ueber Header `X-Memory-Client` oder Query `?client=...`.
+Client-Header `X-Memory-Client` (oder Query `?client=...`) NUR setzen, wenn fuer diesen Client ein eigenes Secret
+(`API_SECRET_COWORK`, `API_SECRET_CLAUDE_CODE`, `API_SECRET_BACKUP`) konfiguriert ist und du genau dieses Secret sendest.
+Mit dem geteilten Secret aus `~/.claude/memory-secret` den Header WEGLASSEN: Ist fuer den genannten Client ein eigenes
+Secret hinterlegt, lehnt die API das geteilte Secret mit 401 ab. Stand 09.09.2026 gilt das fuer `cowork`.
 
 ## Session-Start (bedingt)
 
@@ -102,7 +105,6 @@ MEMORY_API_URL="${MEMORY_API_URL:-https://naatzputlsusiiczltzp.supabase.co/funct
 if [ -z "$API_SECRET" ]; then exit 0; fi
 
 curl -s -H "Authorization: Bearer $API_SECRET" \
-  -H "X-Memory-Client: cowork" \
   "$MEMORY_API_URL?action=load_session&project=PROJEKTNAME" | python3 -m json.tool 2>/dev/null || python -m json.tool 2>/dev/null
 ```
 
@@ -113,6 +115,8 @@ Das Ergebnis enthaelt:
 - **active**: Alle unerledigten Arbeitsstaende und offenen Fragen
 - **recent_sessions**: Die letzten 5 Session-Zusammenfassungen
 - **improvements**: Laufende Experimente (status `experimenting`); `proven` und `retired` nur auf Anfrage
+
+Bei Angabe von `project=` werden zusaetzlich alle Eintraege mit `project` = `null`, `global` oder `shared` geladen.
 
 LIES ALLES und beruecksichtige es im weiteren Verlauf der Session.
 
@@ -153,7 +157,6 @@ Wenn `$API_SECRET` leer ist, fuehre KEINEN curl-Befehl aus und gib KEINE Meldung
 ### Memory laden (Session-Start)
 ```bash
 curl -s -H "Authorization: Bearer $API_SECRET" \
-  -H "X-Memory-Client: cowork" \
   "$MEMORY_API_URL?action=load_session&project=fabrikiq"
 ```
 
@@ -172,7 +175,6 @@ curl -s -H "Authorization: Bearer $API_SECRET" \
 ### Eintrag erstellen
 ```bash
 curl -s -X POST -H "Authorization: Bearer $API_SECRET" \
-  -H "X-Memory-Client: cowork" \
   -H "Content-Type: application/json" \
   "$MEMORY_API_URL" \
   -d '{
@@ -252,7 +254,6 @@ curl -s -X POST -H "Authorization: Bearer $API_SECRET" \
 ### Backup exportieren
 ```bash
 curl -s -H "Authorization: Bearer $API_SECRET" \
-  -H "X-Memory-Client: backup" \
   "$MEMORY_API_URL?action=backup" > /pfad/zum/backup/memory_backup_$(date +%Y%m%d_%H%M%S).json
 ```
 

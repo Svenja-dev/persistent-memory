@@ -321,6 +321,13 @@ function mapPgErrorToResponse(error: { code?: string; message?: string; details?
 // GET handlers
 // =============================================================================
 
+// Projects whose entries are visible in every project-scoped session.
+const CROSS_PROJECT_NAMES = ["global", "shared"] as const;
+
+function crossProjectFilter(project: string): string {
+  return `project.eq.${project},project.in.(${CROSS_PROJECT_NAMES.join(",")}),project.is.null`;
+}
+
 async function handleLoadSession(project?: string) {
   const coreQuery = supabase.from("memory_core").select("*");
   const activeQuery = supabase.from("memory_active").select("*").eq("resolved", false);
@@ -331,10 +338,12 @@ async function handleLoadSession(project?: string) {
     .eq("status", "experimenting");
 
   if (project) {
-    coreQuery.or(`project.eq.${project},project.is.null`);
-    activeQuery.or(`project.eq.${project},project.is.null`);
-    sessionsQuery.or(`project.eq.${project},project.is.null`);
-    improvementsQuery.or(`project.eq.${project},project.is.null`);
+    // Cross-project entries: NULL project plus the literal names "global" and "shared".
+    const scope = crossProjectFilter(project);
+    coreQuery.or(scope);
+    activeQuery.or(scope);
+    sessionsQuery.or(scope);
+    improvementsQuery.or(scope);
   }
 
   const [coreResult, activeResult, sessionsResult, improvementsResult] = await Promise.all([

@@ -6,9 +6,10 @@ Loescht Backups aelter als 30 Tage.
 Verwendung:
     python backup_memory.py
 
-Voraussetzungen:
-    - Environment Variable API_SECRET_BACKUP oder API_SECRET muss gesetzt sein
-    - Oder .env Datei im selben Verzeichnis
+Voraussetzungen (eine Quelle reicht, Reihenfolge = Prioritaet):
+    - Environment Variable API_SECRET_BACKUP oder API_SECRET
+    - .env Datei im selben Verzeichnis
+    - Datei ~/.claude/memory-secret (Standard fuer den Taskplaner-Lauf)
 
 Backup-Verzeichnis: Dasselbe Verzeichnis wie dieses Script.
 Von dort wird es automatisch auf Google Drive synchronisiert.
@@ -40,14 +41,27 @@ def load_env():
                     os.environ.setdefault(key.strip(), value.strip())
 
 
+def load_secret_file() -> str:
+    """Lese das Secret aus ~/.claude/memory-secret (leer, wenn nicht vorhanden)."""
+    secret_file = Path.home() / ".claude" / "memory-secret"
+    try:
+        return secret_file.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
 def get_api_secret():
-    """Hole API_SECRET aus Environment."""
+    """Hole API_SECRET aus Environment, .env oder ~/.claude/memory-secret."""
     load_env()
-    secret = os.environ.get("API_SECRET_BACKUP") or os.environ.get("API_SECRET")
+    secret = (
+        os.environ.get("API_SECRET_BACKUP")
+        or os.environ.get("API_SECRET")
+        or load_secret_file()
+    )
     if not secret:
-        print("FEHLER: API_SECRET_BACKUP oder API_SECRET nicht gesetzt.")
-        print("Setze die Variable per Environment oder erstelle eine .env Datei:")
-        print(f"  echo 'API_SECRET_BACKUP=dein-secret' > {BACKUP_DIR / '.env'}")
+        print("FEHLER: Kein API-Secret gefunden.")
+        print("Quellen: API_SECRET_BACKUP / API_SECRET (Environment), "
+              f"{BACKUP_DIR / '.env'} oder {Path.home() / '.claude' / 'memory-secret'}")
         sys.exit(1)
     return secret
 
@@ -112,6 +126,7 @@ def print_summary(data: dict, filepath: Path, size_kb: float, removed: int):
     core_count = data.get("core", {}).get("count", 0)
     active_count = data.get("active", {}).get("count", 0)
     sessions_count = data.get("sessions", {}).get("count", 0)
+    improvements_count = data.get("improvements", {}).get("count", 0)
 
     print(f"Memory Backup erfolgreich")
     print(f"  Datei:     {filepath}")
@@ -119,6 +134,7 @@ def print_summary(data: dict, filepath: Path, size_kb: float, removed: int):
     print(f"  Core:      {core_count} Eintraege")
     print(f"  Active:    {active_count} Eintraege")
     print(f"  Sessions:  {sessions_count} Eintraege")
+    print(f"  Improvements: {improvements_count} Eintraege")
     if removed > 0:
         print(f"  Bereinigt:  {removed} alte Backups geloescht")
 

@@ -36,6 +36,7 @@ Dieses Skill steuert ein dreischichtiges Memory-System in Supabase:
 | Core | memory_core | Praeferenzen, Architektur, Patterns, Entscheidungen | Langfristig (Monate/Jahre) |
 | Active | memory_active | Arbeitsstaende, offene Fragen, Blocker, naechste Schritte | Mittelfristig (Tage/Wochen) |
 | Sessions | memory_sessions | Session-Zusammenfassungen, was wurde gemacht | Kurzfristig (Protokoll) |
+| Improvements | memory_improvements | Experimente an Skills, Hooks, Workflows und deren Bewertung | Bis retired |
 
 ## Secret Resolution (Multi-Pfad-Fallback)
 
@@ -111,6 +112,7 @@ Das Ergebnis enthaelt:
 - **core**: Alle langfristigen Eintraege (Praeferenzen, Patterns, Entscheidungen)
 - **active**: Alle unerledigten Arbeitsstaende und offenen Fragen
 - **recent_sessions**: Die letzten 5 Session-Zusammenfassungen
+- **improvements**: Laufende Experimente (status `experimenting`); `proven` und `retired` nur auf Anfrage
 
 LIES ALLES und beruecksichtige es im weiteren Verlauf der Session.
 
@@ -135,6 +137,11 @@ LIES ALLES und beruecksichtige es im weiteren Verlauf der Session.
 ### In memory_sessions schreiben bei:
 - Session-Ende: Zusammenfassung was gemacht wurde (sofern Secret verfuegbar)
 - Feld `tool` konsistent setzen: `cowork`, `claude_code`, `api` oder `other` (Legacy: `openclaw` wird noch akzeptiert)
+
+### In memory_improvements schreiben bei:
+- Ein Skill, Hook, Workflow, Prozess, Command oder Agent wird bewusst veraendert, um etwas zu verbessern (status: experimenting)
+- Das Experiment hat sich bewaehrt (status: proven) oder wurde verworfen (status: retired)
+- Pflichtfelder: `title`, `category` (skill, hook, workflow, process, command, agent); optional `status`, `evidence`, `next_step`, `project`
 
 ## API-Referenz
 
@@ -196,6 +203,25 @@ curl -s -X DELETE -H "Authorization: Bearer $API_SECRET" \
   "$MEMORY_API_URL?tier=active&id=UUID-HIER"
 ```
 
+### Improvement anlegen oder bewerten
+```bash
+curl -s -X POST -H "Authorization: Bearer $API_SECRET"   -H "Content-Type: application/json"   "$MEMORY_API_URL"   -d '{
+    "tier": "improvements",
+    "project": "global",
+    "category": "workflow",
+    "title": "Review-Sandwich vor Go-Live",
+    "status": "experimenting",
+    "evidence": "Zwei PRs ohne Nacharbeit gemergt",
+    "next_step": "Nach 5 PRs bewerten"
+  }'
+```
+Status spaeter per POST mit `id` und `status: "proven"` setzen. DELETE auf `tier=improvements&id=...` setzt `status: "retired"` (kein Hard-Delete).
+
+### Improvements lesen (gefiltert)
+```bash
+curl -s -H "Authorization: Bearer $API_SECRET"   "$MEMORY_API_URL?tier=improvements&status=experimenting"
+```
+
 ### Session-Zusammenfassung schreiben
 ```bash
 curl -s -X POST -H "Authorization: Bearer $API_SECRET" \
@@ -235,6 +261,18 @@ Es erstellt eine JSON-Datei mit Zeitstempel und loescht Backups aelter als 30 Ta
 Backup-Verzeichnis wird automatisch auf Google Drive gesichert (sofern konfiguriert).
 
 ## Kategorien-Referenz
+
+### memory_improvements Kategorien und Status
+| Kategorie | Bedeutung |
+|-----------|-----------|
+| skill | Aenderung an einer SKILL.md |
+| hook | Aenderung an einem Hook-Script |
+| workflow | Aenderung am Arbeitsablauf (z.B. Review-Reihenfolge) |
+| process | Aenderung am Prozess (z.B. Memory-Pflege) |
+| command | Aenderung an einem Slash-Command |
+| agent | Aenderung an einer Agent-Definition |
+
+Status: `experimenting` (laeuft), `proven` (bewaehrt), `retired` (verworfen).
 
 ### memory_core Kategorien
 | Kategorie | Wann verwenden | Beispiel |

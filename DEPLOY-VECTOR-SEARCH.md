@@ -1,208 +1,45 @@
-# Vector Search Deploy-Anleitung
+# Optionale Vektorsuche
 
-> **Umgebungsvariable**: `MEMORY_API_URL` ist standardmaessig
-> `https://naatzputlsusiiczltzp.supabase.co/functions/v1/memory-manager`.
-> Alle curl-Beispiele nutzen `$MEMORY_API_URL` -- stelle sicher, dass die Variable gesetzt ist,
-> oder ersetze sie durch die vollstaendige URL.
+Die Basisinstallation aus [README.md](README.md) enthaelt die SQL-Strukturen fuer Text-, semantische und hybride Suche. Ohne `OPENAI_API_KEY` funktionieren Speicherung und Textsuche. Fuer diese Funktionen ist kein kostenpflichtiger Modellzugang erforderlich.
 
-## Was sich aendert
+## Datenfluss vor dem Aktivieren pruefen
 
-- Neue Spalte `embedding` auf memory_core und memory_active (nullable, bricht nichts)
-- Neue SQL-Funktionen: `search_memory_semantic()` und `search_memory_hybrid()`
-- Edge Function: Generiert automatisch Embeddings beim Schreiben (wenn OPENAI_API_KEY gesetzt)
-- Neuer Suchparameter: `?semantic=true` fuer Vector Search
-- Backfill-Endpoint fuer bestehende Eintraege
+Ein serverseitiger `OPENAI_API_KEY` aktiviert Embeddings mit `text-embedding-3-small` und 1536 Dimensionen. Texte aus Core, Active und Improvements werden bereits beim Anlegen und bei Textaenderungen an OpenAI gesendet; semantische Suchanfragen ebenfalls. Sessions bleiben per Textsuche erreichbar; der semantische API-Modus liefert keine Sessions. Die IT muss diesen zusaetzlichen Empfaenger und die erlaubten Datenklassen freigeben. Kosten und Vertragsbedingungen sind anhand des verwendeten Anbieter-Kontos zu pruefen; diese Anleitung verspricht keine festen Preise.
 
-Alles ist abwaertskompatibel. Ohne OPENAI_API_KEY funktioniert alles wie bisher.
+## Konfigurieren und pruefen
 
----
+1. Den freigegebenen Repository-Stand einschliesslich aller SQL-Migrationen auf das ausdruecklich gewaehlte Projekt installieren. Insbesondere die Migration `20261010000000_professional_memory_contract.sql` muss vor der neuen Edge Function laufen.
+2. `OPENAI_API_KEY` ueber die Secret-Verwaltung des gewaehlten Supabase-Projekts bereitstellen. Keine API-Keys in Kommando-History, Git, Skill-Pakete oder Chat kopieren. Das Deployment-Verfahren und die externe Env-Datei sind in README beschrieben.
+3. Mit einem normalen Client und synthetischen Daten einen Core-, Active- oder Improvement-Eintrag schreiben; die Antwort auf Erfolg und `embedding_generated` pruefen. Ein Providerfehler darf nicht mit einem erfolgreichen Embedding verwechselt werden.
+4. Die gleiche Testnotiz per Textsuche und mit `semantic=true` suchen. Der Rueckgabewert `search_type` zeigt den tatsaechlich verwendeten Suchweg; ein Fallback ist kein Beleg fuer funktionierende semantische Suche.
 
-## Voraussetzungen
-
-- **Supabase CLI** installiert und eingeloggt (`supabase login`)
-- **Projektverknuepfung**: `supabase link --project-ref naatzputlsusiiczltzp` (einmalig)
-- **OpenAI API Key** fuer Embedding-Generierung (optional, ohne Key funktioniert alles weiter)
-- **Umgebungsvariablen** in der Shell:
-  ```bash
-  export API_SECRET="<dein-api-secret>"
-  export MEMORY_API_URL="https://naatzputlsusiiczltzp.supabase.co/functions/v1/memory-manager"
-  ```
-
----
-
-## Schritt 1: Migration ausfuehren
-
-Die Migration `supabase/migrations/20260318000000_add_vector_search.sql` aktiviert pgvector,
-fuegt die Embedding-Spalten hinzu und erstellt die Suchfunktionen.
+Beispiel fuer Bash mit bereits bereitgestelltem `MEMORY_API_URL`, `API_SECRET` und `MEMORY_CLIENT`:
 
 ```bash
-cd C:/Users/Anwender/projekte/persistent-memory
-supabase db push
-```
-
-Das fuehrt alle noch nicht angewandten Migrations aus. Die Migration enthaelt
-`CREATE EXTENSION IF NOT EXISTS vector`, daher muss pgvector NICHT manuell im Dashboard
-aktiviert werden.
-
-Pruefe nach dem Push, ob die Migration erfolgreich war:
-
-```bash
-supabase migration list
-```
-
-Die Migration `20260318000000_add_vector_search` sollte als applied erscheinen.
-
-## Schritt 2: OPENAI_API_KEY als Secret setzen
-
-```bash
-supabase secrets set OPENAI_API_KEY=sk-...
-```
-
-Pruefe, ob das Secret gesetzt ist:
-
-```bash
-supabase secrets list
-```
-
-`OPENAI_API_KEY` sollte in der Liste erscheinen (Wert wird nicht angezeigt).
-
-**Kosten**: text-embedding-3-small kostet $0.02 pro 1M Tokens.
-Bei 50 Eintraegen/Tag mit je ~200 Woertern = ~$0.15/Monat.
-
-## Schritt 3: Edge Function deployen
-
-```bash
-cd C:/Users/Anwender/projekte/persistent-memory
-supabase functions deploy memory-manager --no-verify-jwt
-```
-
-## Schritt 4: Testen
-
-### Test 1: Neuen Eintrag schreiben (sollte Embedding generieren)
-
-```bash
-curl -s -X POST \
+curl --fail --silent --show-error --max-time 30 --get \
   -H "Authorization: Bearer $API_SECRET" \
-  -H "Content-Type: application/json" \
-  "$MEMORY_API_URL" \
-  -d '{
-    "tier": "active",
-    "project": "test",
-    "category": "learning",
-    "title": "Vector Search Test",
-    "content": "Dies ist ein Test ob Embeddings automatisch generiert werden.",
-    "tags": ["test", "vector-search"]
-  }'
+  -H "X-Memory-Client: $MEMORY_CLIENT" \
+  --data-urlencode 'action=search' \
+  --data-urlencode 'project=installationstest' \
+  --data-urlencode 'q=synthetische Testnotiz' \
+  --data-urlencode 'semantic=true' "$MEMORY_API_URL"
 ```
 
-Erwartete Antwort enthaelt:
+## Bestehende Eintraege nachberechnen
 
-```json
-{
-  "success": true,
-  "action": "created",
-  "tier": "active",
-  "embedding_generated": true,
-  "data": { ... }
-}
-```
-
-Wenn `OPENAI_API_KEY` nicht gesetzt ist, kommt `"embedding_generated": false` -- das ist kein Fehler.
-
-### Test 2: Semantische Suche
+Backfill ist eine ausdrueckliche Administrationsaktion: Er uebertraegt vorhandene Texte an den Embedding-Anbieter. Erst nach Freigabe und mit geprueftem Ziel aufrufen:
 
 ```bash
-curl -s -H "Authorization: Bearer $API_SECRET" \
-  "$MEMORY_API_URL?action=search&q=Embedding+testen&semantic=true"
-```
-
-Erwartete Antwort:
-
-```json
-{
-  "success": true,
-  "action": "search",
-  "search_type": "semantic",
-  "query": "Embedding testen",
-  "count": 1,
-  "results": [ ... ]
-}
-```
-
-Der Test-Eintrag aus Test 1 sollte in den Ergebnissen erscheinen.
-
-### Test 3: Bestehende Textsuche funktioniert noch
-
-```bash
-curl -s -H "Authorization: Bearer $API_SECRET" \
-  "$MEMORY_API_URL?action=search&q=test"
-```
-
-Erwartete Antwort (ohne `?semantic=true`):
-
-```json
-{
-  "success": true,
-  "action": "search",
-  "search_type": "text",
-  "query": "test",
-  "count": 1,
-  "results": [ ... ]
-}
-```
-
-## Schritt 5: Backfill bestehender Eintraege (optional)
-
-Fuer bestehende Memory-Eintraege ohne Embedding. Verarbeitet max 50 Eintraege pro Aufruf.
-
-```bash
-# Core-Eintraege
-curl -s -X POST \
+curl --fail --silent --show-error --max-time 120 \
   -H "Authorization: Bearer $API_SECRET" \
-  -H "Content-Type: application/json" \
-  "$MEMORY_API_URL" \
-  -d '{"action": "backfill_embeddings", "tier": "core"}'
-
-# Active-Eintraege
-curl -s -X POST \
-  -H "Authorization: Bearer $API_SECRET" \
-  -H "Content-Type: application/json" \
-  "$MEMORY_API_URL" \
-  -d '{"action": "backfill_embeddings", "tier": "active"}'
+  -H "X-Memory-Client: $MEMORY_CLIENT" \
+  -H 'Content-Type: application/json' \
+  --data-binary '{"action":"backfill_embeddings","tier":"core"}' \
+  "$MEMORY_API_URL"
 ```
 
-Erwartete Antwort:
+Der Backfill-Endpoint unterstuetzt `core` und `active` und verarbeitet hoechstens 50 Eintraege pro Aufruf. Bei Fehlern stoppen und die Ursache klaeren; nur bei erfolgreichen Batches mit Fortschritt wiederholen. Nicht unbegrenzt gegen einen fehlerhaften Provider laufen lassen. Nach einem Restore sind Embeddings leer. Core und Active koennen per Backfill nachberechnet werden; Improvements bleiben per Textsuche erreichbar und erhalten bei einer spaeteren regulaeren Textbearbeitung ein neues Embedding. Einen Improvement-Backfill bietet diese Version nicht.
 
-```json
-{
-  "success": true,
-  "action": "backfill_embeddings",
-  "tier": "core",
-  "processed": 12,
-  "errors": 0
-}
-```
+## Deaktivieren
 
-Mehrfach ausfuehren bis `"processed": 0`.
-
----
-
-## Rueckbau (falls noetig)
-
-Die Spalten und Funktionen entfernen, ohne bestehende Daten zu beruehren:
-
-```sql
-DROP FUNCTION IF EXISTS search_memory_semantic;
-DROP FUNCTION IF EXISTS search_memory_hybrid;
-DROP INDEX IF EXISTS idx_memory_core_embedding;
-DROP INDEX IF EXISTS idx_memory_active_embedding;
-ALTER TABLE memory_core DROP COLUMN IF EXISTS embedding;
-ALTER TABLE memory_active DROP COLUMN IF EXISTS embedding;
-```
-
-Edge Function: Alte Version aus Git wiederherstellen und redeployen:
-
-```bash
-git checkout main -- supabase/functions/memory-manager/
-supabase functions deploy memory-manager --no-verify-jwt
-```
+Zum Stoppen neuer Anbieteraufrufe `OPENAI_API_KEY` in der Secret-Verwaltung des Zielprojekts entfernen und pruefen, dass die laufende Function diese Konfiguration verwendet. Vorhandene Embeddings bleiben in der Datenbank; ein spaeteres Textupdate ohne Anbieter invalidiert das alte Embedding. Die Basissuche bleibt verfuegbar. Schema, sichere RPC-Rechte und Migrationen muessen dafuer nicht zurueckgesetzt werden. Eine vollstaendige Datenloeschung ist eine separate, ausdruecklich freizugebende Operation.

@@ -1,0 +1,84 @@
+name: Memory quality
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  client-and-api:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.11', '3.13']
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.7
+      - name: Backup and restore regressions
+        run: python -B -m unittest discover -s backup -p "test_*.py" -v
+      - name: Package and deployment regressions
+        run: python -B -m unittest discover -s tests -p "test_*.py" -v
+      - name: API regressions without network or credentials
+        run: deno test supabase/functions/memory-manager/handler_test.ts
+      - name: Type check production entrypoint
+        run: deno check --lock=deno.lock --frozen supabase/functions/memory-manager/index.ts
+      - name: Build distribution from explicit file list
+        run: python scripts/build_skill.py
+
+  database:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start isolated PostgreSQL with Supabase extensions
+        run: |
+          docker run -d --name memory-contract-db \
+            -e POSTGRES_PASSWORD=local-contract-test-only \
+            -e POSTGRES_DB=postgres \
+            supabase/postgres:17.11.0.004 \
+            postgres -c shared_preload_libraries=pg_cron -c cron.database_name=postgres
+          for attempt in $(seq 1 60); do
+            if docker exec memory-contract-db pg_isready -U postgres -d postgres; then exit 0; fi
+            sleep 2
+          done
+          docker logs memory-contract-db
+          exit 1
+      - name: Bootstrap test-only Supabase roles
+        run: |
+          docker exec -i memory-contract-db psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE SCHEMA IF NOT EXISTS extensions;
+          CREATE SCHEMA IF NOT EXISTS auth;
+          DO $$ BEGIN
+            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='anon') THEN CREATE ROLE anon NOLOGIN; END IF;
+            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF;
+            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='service_role') THEN CREATE ROLE service_role NOLOGIN BYPASSRLS; END IF;
+          END $$;
+          CREATE OR REPLACE FUNCTION auth.role() RETURNS text LANGUAGE sql STABLE AS
+            $$ SELECT coalesce(current_setting('request.jwt.claim.role', true), current_user)::text $$;
+          GRANT USAGE ON SCHEMA public, extensions, auth TO anon, authenticated, service_role;
+          SQL
+      - name: Install from empty database and verify contracts
+        run: |
+          for migration in supabase/migrations/*.sql; do
+            echo "Applying $migration"
+            docker exec -i memory-contract-db psql -U postgres -d postgres -v ON_ERROR_STOP=1 < "$migration"
+          done
+          docker exec -i memory-contract-db psql -U postgres -d postgres -v ON_ERROR_STOP=1 < supabase/tests/database/memory_contract.sql
+      - name: Database diagnostics
+        if: failure()
+        run: docker logs memory-contract-db
+      - name: Remove isolated database
+        if: always()
+        run: docker rm -f memory-contract-db

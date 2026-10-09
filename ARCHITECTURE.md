@@ -1,175 +1,79 @@
-# Architecture
+# Architektur
 
-## Systemueberblick
+## Komponenten und Vertrauensgrenze
 
-Das Persistent Memory System ist ein serverloser REST-Service auf Basis von Supabase. Es besteht aus drei Komponenten:
+```text
+Cowork / Claude Code / Codex / Backup / Restore
+                  | HTTPS + Bearer + Client-Header
+                  v
+       Supabase Edge Function: memory-manager
+                  | service_role (nur serverseitig)
+                  v
+ PostgreSQL: core / active / sessions / improvements
+       | Such-RPCs, Snapshot-Export, Insert-only-Restore
+       | pg_cron: begrenzte Aufbewahrung
+```
 
-1. **Edge Function** (`memory-manager`) - Geschaeftslogik, Auth, CRUD-Operationen
-2. **PostgreSQL-Datenbank** - Drei Tabellen mit RLS, Indexes und Volltextsuche
-3. **pg_cron-Jobs** - Automatische Datenbereinigung nach Retention-Regeln
+Eine Instanz hat einen gemeinsamen Vertrauensbereich. Es gibt keine Nutzeridentitaet, keinen `owner_id`-Filter und keine Mandantentrennung. Mehrere persoenliche Nutzer erhalten getrennte, firmenverwaltete Supabase-Projekte. Client-Secrets erlauben getrennten Widerruf und beschraenkte Betriebsrollen; sie trennen keine Datensaetze. Projektfilter sind Komfortfilter.
 
 ## Datenmodell
 
-### Drei-Schichten-Architektur
+Alle vier Tabellen haben UUID-IDs, Projektzuordnung, Tags und `created_at`. `project=null`, `global` und `shared` werden bei Projektabfragen mitgeladen. Ohne Filter kann der Client alle Projekte innerhalb seiner Instanz lesen.
 
-```
-                    Lebensdauer
-                    <--------->
-  memory_core       |=========================================|  dauerhaft
-  memory_active     |==============|  bis resolved + 30 Tage
-  memory_sessions   |========|  90 Tage
-```
+| Tabelle | Inhalt | Lebenszyklus |
+| --- | --- | --- |
+| `memory_core` | `category`, `title`, `content`, `importance` | Dauerhaft; `updated_at` bei Updates |
+| `memory_active` | `category`, `title`, `content`, `priority`, `resolved`, `resolved_at` | Offen oder erledigt; Cleanup 30 Tage nach Erledigung |
+| `memory_sessions` | `session_id`, `tool`, `summary`, Arrays fuer Entscheidungen, Probleme und Dateien | Cleanup 90 Tage nach `created_at`; keine `updated_at`-Spalte |
+| `memory_improvements` | `category`, `title`, `status`, `evidence`, `next_step`, `model_version_notes` | `experimenting`, `proven`, `retired`; dauerhaft |
 
-**Warum drei Schichten?**
-- **Core**: Wissen das sich selten aendert (Praeferenzen, Patterns). Wird bei jedem Session-Start geladen.
-- **Active**: Laufende Arbeit. Hat ein `resolved`-Flag fuer Soft-Delete. Nur unerledigte Eintraege werden bei Session-Start geladen.
-- **Sessions**: Protokoll was wann gemacht wurde. Wird fuer Kontext der letzten 5 Sessions geladen, danach nur noch ueber Suche erreichbar.
+Die zulaessigen Kategorien werden durch SQL-Constraints und API-Validierung gemeinsam durchgesetzt. Core umfasst auch `user_profile`, `user_values`, `work_style`, `communication`, `pain_points` und `workflow_preference`; diese Feldnamen autorisieren keine Speicherung personenbezogener Daten. Normale POST-Aufrufe erlauben nur tierspezifische Felder. `id` bedeutet Update eines vorhandenen Datensatzes, kein Upsert. Normale Clients duerfen Zeitstempel und Embeddings nicht setzen.
 
-### memory_core
+Der Server pflegt bei Active-Zustandswechseln `resolved_at`: Aufloesen setzt einen aktuellen Zeitpunkt, erneutes Oeffnen entfernt ihn. Erneutes Schreiben des unveraenderten Status darf die Aufbewahrungsfrist nicht verschieben. Restore verwendet dagegen den historischen Status und Zeitpunkt.
 
-| Spalte | Typ | Beschreibung |
-|--------|-----|-------------|
-| id | UUID | Primaerschluessel (auto-generiert) |
-| project | TEXT | Projektname oder NULL (projektuebergreifend) |
-| category | TEXT | preference, architecture, pattern, context, tool_config, decision |
-| title | TEXT | Kurztitel fuer schnelles Scannen (NOT NULL) |
-| content | TEXT | Eigentlicher Inhalt (NOT NULL) |
-| tags | TEXT[] | Frei waehlbare Tags (Array) |
-| importance | TEXT | low, normal (default), high, critical |
-| created_at | TIMESTAMPTZ | Erstellungszeitpunkt |
-| updated_at | TIMESTAMPTZ | Letzte Aenderung (Trigger-gesteuert) |
+## Authentifizierung und Datenbankrechte
 
-### memory_active
+Die Edge Function verwendet eigene Bearer-Authentifizierung und wird mit `--no-verify-jwt` deployt. `SUPABASE_SERVICE_ROLE_KEY` bleibt serverseitig. Normale Clients `cowork`, `claude_code`, `openclaw` und `api` werden ihrem dedizierten `API_SECRET_*` zugeordnet; `api` ist auch der Codex-Client. Nur wenn das jeweilige Client-Secret fehlt, kann der Legacy-Schluessel `API_SECRET` fuer normale Clients greifen.
 
-| Spalte | Typ | Beschreibung |
-|--------|-----|-------------|
-| id | UUID | Primaerschluessel |
-| project | TEXT | Projektname oder NULL |
-| category | TEXT | work_state, open_question, next_step, blocker, decision_pending, learning |
-| title | TEXT | Kurztitel (NOT NULL) |
-| content | TEXT | Inhalt (NOT NULL) |
-| tags | TEXT[] | Tags (Array) |
-| priority | TEXT | low, normal (default), high, urgent |
-| resolved | BOOLEAN | Soft-Delete Flag (default: false) |
-| resolved_at | TIMESTAMPTZ | Zeitpunkt der Erledigung |
-| created_at | TIMESTAMPTZ | Erstellungszeitpunkt |
-| updated_at | TIMESTAMPTZ | Letzte Aenderung (Trigger-gesteuert) |
+`API_SECRET_BACKUP` erlaubt ausschliesslich GET. `API_SECRET_RESTORE` erlaubt mit ausdruecklichem `X-Memory-Client: restore` einen Export und die Restore-Operation. Andere Schreiboperationen sind diesen Rollen verboten. Reservierte Rollen haben keinen Legacy-Fallback. Schluessel muessen pro Rolle verschieden sein; ein Backup-Schluessel bekommt durch Weglassen oder Aendern des Headers keine Schreibrechte.
 
-### memory_sessions
+Auf allen Memory-Tabellen ist RLS aktiv. Such-, Export- und Restore-Funktionen sind `SECURITY DEFINER` mit leerem festem `search_path` und vollqualifizierten Objektzugriffen. Ausfuehrungsrechte werden `PUBLIC`, `anon` und `authenticated` entzogen und nur `service_role` erteilt. Damit kann ein Supabase-Client die Edge-Authentifizierung nicht durch direkte RPC-Aufrufe umgehen. Diese Rechte und die Migrationen werden auf einer isolierten Datenbank geprueft; daraus folgt keine Aussage ueber manuelle Aenderungen an einer externen Installation.
 
-| Spalte | Typ | Beschreibung |
-|--------|-----|-------------|
-| id | UUID | Primaerschluessel |
-| session_id | TEXT | Eindeutige Session-ID (z.B. `2026-02-27_claude_code_1`) |
-| project | TEXT | Projektname oder NULL |
-| tool | TEXT | cowork, claude_code, openclaw, api, other |
-| summary | TEXT | Was wurde gemacht (NOT NULL) |
-| decisions_made | TEXT[] | Getroffene Entscheidungen |
-| issues_encountered | TEXT[] | Aufgetretene Probleme |
-| files_changed | TEXT[] | Geaenderte Dateien |
-| tags | TEXT[] | Tags (Array) |
-| created_at | TIMESTAMPTZ | Erstellungszeitpunkt |
+## Kontext, Suche und Embeddings
 
-## Sicherheitsmodell
+`load_session` liefert bis zu 500 Core-, offene Active- und experimentierende Improvement-Eintraege sowie fuenf aktuelle Sessions. Jeder Block enthaelt `count`, `total_count`, `limit`, `truncated` und `data`; die Antwort kennzeichnet auch insgesamt abgeschnittenen Kontext. Pflichtabfragefehler brechen den Aufruf ab. Fuer fehlenden Kontext dient gezielte Suche; ein Session-Abruf ist kein vollstaendiger Export.
 
-### Authentifizierung
+Textsuche durchsucht alle vier Schichten. Erledigte Active-Eintraege und retired Improvements sind ausgeschlossen. Core und Active verwenden Titel und Inhalt, Sessions die Zusammenfassung, Improvements Titel, Evidence, Next Step und Model Version Notes.
 
-```
-Client Request
-    |
-    v
-Bearer Token aus Authorization-Header extrahieren
-    |
-    v
-Client identifizieren (X-Memory-Client Header oder ?client= Query)
-    |
-    +--[Client angegeben]--> Token gegen CLIENT_SECRET_ENV[client] pruefen
-    |                        Fallback: Token gegen API_SECRET pruefen
-    |
-    +--[Kein Client]-------> Token gegen ALLE konfigurierten Secrets pruefen
-    |
-    v
-Zugriff erlaubt oder 401 Unauthorized
-```
+Semantische Suche verwendet optional pgvector und `text-embedding-3-small` (1536 Dimensionen) fuer Core, Active und Improvements. Sessions bleiben per Textsuche erreichbar; der semantische API-Modus liefert keine Sessions. Die SQL-Hybridfunktion kombiniert Text- und Vektoranteile, hat aber keinen eigenen API-Modus. Ohne serverseitigen `OPENAI_API_KEY` werden keine Texte fuer Embeddings uebertragen. Mit Schluessel entstehen Embeddings bereits bei Schreibvorgaengen; semantische Suchanfragen werden ebenfalls an OpenAI gesendet. Bei Text-Teilupdates wird der vollstaendige zusammengefuehrte Text neu eingebettet. Ohne funktionierenden Provider wird ein veraltetes Embedding entfernt. Providerfehler duerfen nicht unbemerkt alte Bedeutungen erhalten.
 
-### Secret-Hierarchie
+## Sicherung und Wiederherstellung
 
-| Environment Variable | Client | Zweck |
-|---------------------|--------|-------|
-| `API_SECRET` | Alle (Legacy-Fallback) | Gemeinsamer Schluessel |
-| `API_SECRET_COWORK` | cowork | Cowork-spezifisch |
-| `API_SECRET_CLAUDE_CODE` | claude_code | Claude Code CLI |
-| `API_SECRET_OPENCLAW` | openclaw | OpenClaw |
-| `API_SECRET_API` | api | Externe API-Aufrufe |
-| `API_SECRET_BACKUP` | backup | Backup-Script |
+`export_memory_backup()` erzeugt einen einzigen konsistenten JSON-Snapshot. `schema_version=1`, `complete=true`, `exported_at` und vier `{count,data}`-Bloecke bilden den Exportvertrag. Es gibt keine PostgREST-Zeilenbegrenzung pro Tabelle und kein 100-Session-Limit. Embeddings werden als regenerierbare Daten weggelassen.
 
-Empfehlung: Pro Client eigene Secrets vergeben. So kann ein kompromittierter Client isoliert werden, ohne alle anderen zu invalidieren.
+Der Python-Client validiert diesen Vertrag vor Speicherung und Retention. Das lokale Manifest ergaenzt `source_url`. Dateien erhalten eindeutige Namen und werden zuerst temporaer, dann atomar fertiggestellt. Ein Fehler erzeugt kein vermeintlich gueltiges Backup und keine anschliessende Bereinigung. Die 30-Tage-Bereinigung beruecksichtigt nur gueltige Sicherungen derselben Quelle.
 
-### Row Level Security (RLS)
+`POST {action:"restore",tier,record}` ist ausschliesslich fuer die Restore-Rolle bestimmt. `restore_memory_record(text,jsonb)` erhaelt UUIDs, Originalzeitstempel sowie Lebenszyklusfelder und fuegt nur fehlende Datensaetze ein. Vorhandene UUIDs werden nie ueberschrieben. Wiederholung nach Teilfehlern erzeugt keine neuen Identitaeten. Der Client startet als Dry-run, validiert alle Daten vor dem Netzwerkzugriff und verlangt fuer ein abweichendes Ziel `--allow-different-target`. Alte ungepruefte Exportformate werden nicht automatisch als vollstaendige Backups akzeptiert.
 
-Alle drei Tabellen haben RLS aktiviert. Nur die `service_role` hat Zugriff. Die Edge Function nutzt den `SUPABASE_SERVICE_ROLE_KEY` und umgeht damit RLS-Einschraenkungen fuer Endnutzer.
+## Migrationen und Betrieb
 
-Direkte Datenbankzugriffe mit dem `anon`-Key sind blockiert.
+Alle Migrationen unter `supabase/migrations/` sind autoritativ. Die Migration `20261010000000_professional_memory_contract.sql` aktualisiert bestehende Installationen; die aeltere Cron-Bootstrap-Migration wurde zugleich fuer frische Installationen repariert. Migrationen muessen vor der neuen Edge Function laufen.
 
-### JWT-Verification
+Die Installation aktiviert `vector` und `pg_cron`. Der PostgreSQL-Host muss `pg_cron` laden koennen (insbesondere `shared_preload_libraries`; bei Supabase bereitgestellt). Zwei Jobs bleiben:
 
-Die Edge Function ist mit `verify_jwt = false` deployt. Die Authentifizierung laeuft ausschliesslich ueber die eigene Bearer-Token-Validierung, nicht ueber Supabase Auth JWT.
-
-## Retention und Cleanup
-
-Drei pg_cron-Jobs laufen taeglich um 03:00 UTC:
-
-| Job | Zeitplan | Aktion |
-|-----|----------|--------|
+| Job | UTC | Aktion |
+| --- | --- | --- |
 | `cleanup-memory-sessions` | Taeglich 03:00 | Sessions aelter als 90 Tage loeschen |
-| `cleanup-memory-active-resolved` | Taeglich 03:05 | Erledigte Active-Eintraege aelter als 30 Tage loeschen |
-| `log-memory-stats` | Sonntags 03:10 | Statistiken in `cron_logs` schreiben |
+| `cleanup-memory-active-resolved` | Taeglich 03:05 | Active-Eintraege 30 Tage nach `resolved_at` loeschen |
 
-## Indexierung
+Der ehemalige Statistikjob mit Verweis auf eine fremde `cron_logs`-Tabelle wird entfernt. Es gibt keine automatische Cloud-Synchronisierung von Backups. Monitoring, Secret-Rotation, Dateirechte und Wiederherstellungsproben liegen beim Betreiber. Fuer eine kuenftige gemeinsame Mehrnutzerinstanz waeren serverseitige Eigentumspruefungen in allen Operationen, benutzerbezogene Auditierung und passende Lastgrenzen gesondert zu implementieren.
 
-| Tabelle | Index | Typ | Zweck |
-|---------|-------|-----|-------|
-| memory_core | project, category, importance | B-Tree | Filter-Queries |
-| memory_core | tags | GIN | Array-Contains-Suche |
-| memory_active | project, category, resolved | B-Tree | Filter-Queries |
-| memory_active | tags | GIN | Array-Contains-Suche |
-| memory_sessions | project, session_id, tool | B-Tree | Filter-Queries |
-| memory_sessions | created_at DESC | B-Tree | Sortierung nach Aktualitaet |
+## Quellen und Laufzeiten
 
-## Volltextsuche
+- `supabase/functions/memory-manager/index.ts`: produktiver Einstieg; `handler.ts` enthaelt die injizierbare API-Logik. Die entsprechenden Dateien unter `edge-function/` sind synchron zu haltende Referenzkopien.
+- `supabase/migrations/`: autoritative Migrationen; `supabase-migrations/` sind Referenzkopien.
+- `backup/`: Python 3.11+, Backup-/Restore-Vertraege und Regressionstests.
+- `scripts/build_skill.py`: ausschliesslich `SKILL.md` und `LICENSE` im reproduzierbaren ZIP.
+- `tests/` und API-/SQL-Tests: deterministische Regression ohne bezahlten Modellzugang.
 
-Die Funktion `search_memory(search_term, filter_project)` durchsucht alle drei Tabellen mit `ILIKE` und gibt maximal 50 Ergebnisse zurueck, sortiert nach `created_at DESC`.
-
-Suchfelder pro Tabelle:
-- **Core**: title, content
-- **Active**: title, content (nur nicht-resolved)
-- **Sessions**: summary
-
-## Request-Ablauf
-
-```
-1. Client sendet HTTP-Request
-2. CORS-Preflight (OPTIONS) wird direkt beantwortet
-3. Bearer Token wird validiert
-4. Request-ID wird generiert (UUID, 8 Zeichen)
-5. Je nach HTTP-Methode:
-   GET  -> load_session / search / backup / list
-   POST -> create oder update (upsert via id-Feld)
-   DELETE -> soft-delete (active) oder hard-delete (core, sessions)
-6. Ergebnis als JSON mit X-Request-Id Header
-7. Logging: Request-ID, Methode, Erfolg/Fehler
-```
-
-## Abhaengigkeiten
-
-### Runtime
-- Supabase (PostgreSQL 17, Edge Functions / Deno)
-- pg_cron Extension (fuer Retention-Jobs)
-- pg_net Extension (optional, fuer Monitoring)
-
-### Entwicklung
-- Supabase CLI v2.x
-- Python 3.8+ (nur Backup-Script)
-
-### Keine weiteren Dependencies
-Die Edge Function nutzt ausschliesslich Deno-Standardbibliothek und den Supabase JS Client. Kein npm, kein package.json.
+Installationsanleitung, Konfigurationsvariablen und Abnahmeablauf stehen in [README.md](README.md). Der Skill selbst enthaelt nur den begrenzten Client-Arbeitsablauf.

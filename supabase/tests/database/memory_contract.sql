@@ -142,7 +142,7 @@ BEGIN
   END IF;
   FOREACH tier IN ARRAY ARRAY['core', 'active', 'sessions', 'improvements'] LOOP
     IF jsonb_array_length(snapshot -> tier -> 'data') <> (snapshot -> tier ->> 'count')::int
-      OR (snapshot -> tier ->> 'count')::int < CASE WHEN tier = 'sessions' THEN 152 ELSE 1101 END THEN
+      OR (snapshot -> tier ->> 'count')::int < (CASE WHEN tier = 'sessions' THEN 152 ELSE 1101 END) THEN
       RAISE EXCEPTION 'Truncated snapshot for %', tier;
     END IF;
     IF EXISTS (SELECT 1 FROM jsonb_array_elements(snapshot -> tier -> 'data') item WHERE item ? 'embedding') THEN

@@ -2,6 +2,28 @@
 
 Alle relevanten Aenderungen am Persistent Memory System.
 
+## Unreleased
+
+### Sicherheit und Installation
+- Such-, Export- und Restore-RPCs auf die Serverrolle beschraenkt und SQL-Suchpfade abgesichert.
+- Private Standard-Endpunkte entfernt; Deployment, Backup und Restore verlangen ein ausdrueckliches Ziel.
+- Backup-Zugriff auf Lesen beschraenkt; Restore mit eigenem Schluessel und expliziter Rolle.
+- Reproduzierbares Cowork-/Codex-Skill-Paket ausschliesslich aus `SKILL.md` und `LICENSE`; private Arbeitsdateien bleiben ausgeschlossen.
+- Gemeinsamen Skill, getrennte Instanz je Person, Konfiguration in Cowork und Codex, externe Embedding-Datenfluesse und Grenzen automatischer Skill-Aktivierung dokumentiert.
+- MIT-Lizenzdatei ergaenzt; Mindestversion fuer Python-Werkzeuge und Tests auf 3.11 vereinheitlicht.
+
+### Zuverlaessigkeit
+- Vollstaendiger konsistenter Export aller vier Memory-Tabellen mit versioniertem Vertrag und validierten Counts.
+- Backup-Dateien eindeutig und atomar schreiben; unvollstaendige Exporte verhindern Speicherung und Retention.
+- Restore bewahrt UUIDs, Zeitstempel und Lebenszyklus; Wiederholung fuegt nur fehlende Datensaetze ein.
+- Ungueltige Backups ablehnen und abweichende Restore-Ziele ausdruecklich bestaetigen lassen.
+- Kontextbegrenzung sichtbar machen und Pflichtabfragefehler weiterreichen.
+- Embeddings nach Text-Teilupdates aus dem gesamten Text erneuern oder invalidieren.
+- Improvements in die Suche aufgenommen, Core-Kategorien mit dem Schema vereinheitlicht und POST-Felder pro Tier begrenzt.
+- Active-Status und `resolved_at` konsistent halten; frische Cron-Installation repariert und ungueltigen Statistikjob entfernt.
+- Fehlgeschlagene Deployment-Verbindungstests als Fehler beenden.
+- Deterministische API-, SQL-, Backup-/Restore-, Deployment- und Pakettests ohne bezahlten Modellzugang ergaenzt.
+
 ## [1.0.0] - 2026-02-27
 
 Erstes produktives Deployment auf Supabase.

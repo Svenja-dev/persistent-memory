@@ -48,7 +48,10 @@ jobs:
             -e POSTGRES_PASSWORD=local-contract-test-only \
             -e POSTGRES_DB=postgres \
             supabase/postgres:17.11.0.004 \
-            postgres -c shared_preload_libraries=pg_cron -c cron.database_name=postgres
+            postgres -c shared_preload_libraries=pg_cron,supautils \
+            -c cron.database_name=postgres \
+            -c supautils.privileged_role=postgres \
+            -c supautils.privileged_extensions=pg_cron,vector
           for attempt in $(seq 1 60); do
             if docker exec memory-contract-db pg_isready -U postgres -d postgres; then exit 0; fi
             sleep 2

@@ -57,7 +57,7 @@ jobs:
           exit 1
       - name: Bootstrap test-only Supabase roles
         run: |
-          docker exec -i memory-contract-db psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+          docker exec -i memory-contract-db psql -U supabase_admin -d postgres -v ON_ERROR_STOP=1 <<'SQL'
           CREATE SCHEMA IF NOT EXISTS extensions;
           CREATE SCHEMA IF NOT EXISTS auth;
           DO $$ BEGIN

@@ -55,11 +55,6 @@ def get_api_credentials() -> Tuple[str, str]:
     return secret, "backup"
 
 
-def get_api_secret() -> str:
-    """Nur den Backup-Schluessel liefern (Kompatibilitaet)."""
-    return get_api_credentials()[0]
-
-
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         # Ein Bearer-Token wird niemals an ein Redirect-Ziel weitergereicht.

@@ -39,7 +39,11 @@ def open_request(request: urllib.request.Request):
 
 
 def validate_endpoint(value: str) -> str:
-    """Endpunkt pruefen: HTTPS (HTTP nur fuer Loopback), fester Pfad, keine Zugangsdaten."""
+    """Endpunkt pruefen: HTTPS (HTTP nur fuer Loopback), fester Pfad, keine Zugangsdaten.
+
+    Bewusst eigenstaendig statt Import aus backup/backup_schema.py: das Skript wird allein
+    im Skill-Paket ausgeliefert. Regelaenderungen muessen in beiden Dateien erfolgen.
+    """
     if any(character.isspace() or ord(character) < 32 for character in value) or "\\" in value:
         raise ValueError("MEMORY_API_URL enthaelt ungueltige Zeichen")
     parsed = urllib.parse.urlsplit(value)
@@ -146,7 +150,9 @@ def format_context(payload: dict, project: Optional[str]) -> str:
             lines.append(line)
         if truncated_output:
             break
-    server_truncated = bool(payload.get("truncated")) or any(bool(payload[b].get("truncated")) for b in titles)
+    # Das Fenster von fuenf Sessions ist gewollt; nur abgeschnittene Core/Active/Improvements sind eine Luecke.
+    server_truncated = bool(payload.get("truncated")) or any(
+        bool(payload[b].get("truncated")) for b in titles if b != "recent_sessions")
     if truncated_output or server_truncated:
         lines.append("Hinweis: Kontext ist unvollstaendig. Bei Bedarf gezielt mit action=search nachladen.")
     return "\n".join(lines)
@@ -165,6 +171,10 @@ def main(argv: Optional[list[str]] = None, environ: Optional[Mapping[str, str]] 
          stdin_text: Optional[str] = None) -> int:
     """Ablauf: Konfiguration pruefen, Projekt bestimmen, laden, kompakt ausgeben. Nie blockieren."""
     args = parse_args(argv)
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # Windows-Pipes sind sonst cp1252.
+    except (AttributeError, ValueError):
+        pass
     environ = os.environ if environ is None else environ
     config = read_config(environ)
     if config is None:

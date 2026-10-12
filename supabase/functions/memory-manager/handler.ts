@@ -410,7 +410,10 @@ export function createMemoryHandler(dependencies: HandlerDependencies) {
       action: "load_session",
       project: project || "all",
       vector_search_enabled: !!env("OPENAI_API_KEY"),
-      truncated: blocks.some((block) => block.truncated),
+      // Das Fenster von fuenf Sessions ist gewollt und zaehlt nicht als abgeschnittener Kontext.
+      truncated: blocks.some((block, index) =>
+        TIERS[index] !== "sessions" && block.truncated
+      ),
       core: blocks[0],
       active: blocks[1],
       recent_sessions: blocks[2],
@@ -597,10 +600,9 @@ export function createMemoryHandler(dependencies: HandlerDependencies) {
     if (
       updating && (textChanged || (tier === "active" && "resolved" in entry))
     ) {
-      const { data, error } = await supabase.from(table).select("*").eq(
-        "id",
-        entry.id,
-      ).single();
+      const { data, error } = await supabase.from(table).select(
+        readColumns(tier),
+      ).eq("id", entry.id).single();
       if (error) throw error;
       if (!data) throw new HttpError(404, "Entry not found");
       previous = data;
@@ -649,10 +651,11 @@ export function createMemoryHandler(dependencies: HandlerDependencies) {
       if (error) throw error;
       return { success: true, action: "retired", tier, data };
     }
+    // single() liefert PGRST116 (404), wenn keine Zeile geloescht wurde.
     const { error } = await supabase.from(`memory_${tier}`).delete().eq(
       "id",
       id,
-    );
+    ).select().single();
     if (error) throw error;
     return { success: true, action: "deleted", tier, id };
   }

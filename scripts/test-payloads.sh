@@ -41,7 +41,7 @@ run_test() {
   local payload="$3"
   local actual
   actual=$(curl -s -o "$BODY_FILE" -w "%{http_code}" --max-time 30 \
-    -X POST -H "Authorization: Bearer $API_SECRET" "${CLIENT_HEADER[@]}" \
+    -X POST -H "Authorization: Bearer $API_SECRET" ${CLIENT_HEADER[@]+"${CLIENT_HEADER[@]}"} \
     -H "Content-Type: application/json" \
     "$MEMORY_API_URL" \
     -d "$payload")
@@ -92,10 +92,10 @@ run_test "restore ohne Restore-Rolle" 403 '{"tier":"core","action":"restore","re
 # Aufraeumen: core wird geloescht, active als erledigt markiert, improvements auf retired gesetzt
 echo
 echo "=== Aufraeumen ==="
-for entry in "${CREATED_IDS[@]}"; do
+for entry in ${CREATED_IDS[@]+"${CREATED_IDS[@]}"}; do
   tier="${entry%%:*}"
   id="${entry##*:}"
-  curl -s --max-time 30 -X DELETE -H "Authorization: Bearer $API_SECRET" "${CLIENT_HEADER[@]}" \
+  curl -s --max-time 30 -X DELETE -H "Authorization: Bearer $API_SECRET" ${CLIENT_HEADER[@]+"${CLIENT_HEADER[@]}"} \
     "$MEMORY_API_URL?tier=$tier&id=$id" > /dev/null
   echo "Bereinigt $tier/$id"
 done

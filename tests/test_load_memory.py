@@ -81,7 +81,9 @@ class LoadMemoryTests(unittest.TestCase):
         self.assertIn("recent_sessions: 1 von 9, vom Server gekuerzt", out)
         self.assertIn("2026-10-10 [beispiel] 2026-10-10-a: Backup repariert", out)
         self.assertIn("[-|workflow|experimenting] Session-Hook: Zwei Wochen beobachten", out)
-        self.assertIn("unvollstaendig", out)
+        self.assertNotIn("unvollstaendig", out)  # Das Session-Fenster ist keine Luecke.
+        with patch.object(loader, "open_request", side_effect=respond(session_payload(core=block([], total=700, truncated=True)))):
+            self.assertIn("unvollstaendig", self.run_main()[1])
         self.assertNotIn("embedding", out)
         self.assertNotIn("0.1", out)
         self.assertNotIn(SECRET, out)

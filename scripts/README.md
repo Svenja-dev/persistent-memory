@@ -2,7 +2,7 @@
 
 ## build_skill.py
 
-Baut das reproduzierbare Skill-Paket `dist/persistent-memory.zip` aus genau `SKILL.md` und `LICENSE`. Siehe [README.md](../README.md#skill-sicher-installieren).
+Baut das reproduzierbare Skill-Paket `dist/persistent-memory.zip` aus genau `SKILL.md`, `LICENSE` und `scripts/load_memory.py`. Siehe [README.md](../README.md#skill-sicher-installieren).
 
     python -B scripts/build_skill.py
 

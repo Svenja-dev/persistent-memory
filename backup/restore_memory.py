@@ -131,6 +131,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     """Ablauf: Backup validieren, Ziel pruefen, Plan anzeigen, nur mit --apply schreiben."""
     args = parse_args(argv)
     try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # Titel koennen beliebiges Unicode enthalten.
+    except (AttributeError, ValueError):
+        pass
+    try:
         path = args.file or newest_backup_file()
         if not path:
             raise ValueError("Keine Backup-Datei gefunden")

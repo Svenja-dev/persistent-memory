@@ -3,7 +3,20 @@
 -- Upgrade: zuerst diese Migration, danach die dazugehoerige Edge Function.
 -- Frische Installationen durchlaufen alle Migrationen in Zeitreihenfolge.
 
-ALTER TABLE public.memory_core DROP CONSTRAINT memory_core_category_check;
+-- Bestehende Installationen koennen den Kategorie-Check unter einem anderen Namen
+-- oder bereits erweitert haben; alle Check-Constraints auf category werden ersetzt.
+DO $$
+DECLARE existing_constraint text;
+BEGIN
+  FOR existing_constraint IN
+    SELECT conname FROM pg_constraint
+    WHERE conrelid = 'public.memory_core'::regclass AND contype = 'c'
+      AND pg_get_constraintdef(oid) ILIKE '%category%'
+  LOOP
+    EXECUTE format('ALTER TABLE public.memory_core DROP CONSTRAINT %I', existing_constraint);
+  END LOOP;
+END;
+$$;
 ALTER TABLE public.memory_core ADD CONSTRAINT memory_core_category_check CHECK (
   category IN ('preference', 'architecture', 'pattern', 'context', 'tool_config',
     'decision', 'user_profile', 'user_values', 'work_style', 'communication',
@@ -148,6 +161,8 @@ $$;
 
 -- Restore ist nur fuer den Server verfuegbar. Bestehende IDs werden niemals
 -- ueberschrieben, auch nicht nach Teilfehlern oder bei parallelen Wiederholungen.
+-- Fehlende optionale Felder erhalten die Tabellen-Defaults, damit kein Datensatz
+-- mit resolved/tags/status NULL unsichtbar und von der Bereinigung ausgenommen wird.
 CREATE OR REPLACE FUNCTION public.restore_memory_record(p_tier text, p_record jsonb)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
@@ -213,28 +228,29 @@ BEGIN
       core_row := jsonb_populate_record(NULL::public.memory_core, p_record);
       INSERT INTO public.memory_core (id, project, category, title, content, tags, importance, created_at, updated_at)
       VALUES (core_row.id, core_row.project, core_row.category, core_row.title, core_row.content,
-        core_row.tags, core_row.importance, core_row.created_at, core_row.updated_at)
+        coalesce(core_row.tags, '{}'), coalesce(core_row.importance, 'normal'), core_row.created_at, core_row.updated_at)
       ON CONFLICT (id) DO NOTHING RETURNING id INTO inserted_id;
     WHEN 'active' THEN
       active_row := jsonb_populate_record(NULL::public.memory_active, p_record);
       INSERT INTO public.memory_active (id, project, category, title, content, tags, priority, resolved, resolved_at, created_at, updated_at)
       VALUES (active_row.id, active_row.project, active_row.category, active_row.title, active_row.content,
-        active_row.tags, active_row.priority, active_row.resolved, active_row.resolved_at, active_row.created_at, active_row.updated_at)
+        coalesce(active_row.tags, '{}'), coalesce(active_row.priority, 'normal'), coalesce(active_row.resolved, false),
+        active_row.resolved_at, active_row.created_at, active_row.updated_at)
       ON CONFLICT (id) DO NOTHING RETURNING id INTO inserted_id;
     WHEN 'sessions' THEN
       session_row := jsonb_populate_record(NULL::public.memory_sessions, p_record);
       INSERT INTO public.memory_sessions (id, session_id, project, tool, summary, decisions_made, issues_encountered, files_changed, tags, created_at)
-      VALUES (session_row.id, session_row.session_id, session_row.project, session_row.tool, session_row.summary,
-        session_row.decisions_made, session_row.issues_encountered, session_row.files_changed, session_row.tags, session_row.created_at)
+      VALUES (session_row.id, session_row.session_id, session_row.project, coalesce(session_row.tool, 'cowork'), session_row.summary,
+        session_row.decisions_made, session_row.issues_encountered, session_row.files_changed, coalesce(session_row.tags, '{}'), session_row.created_at)
       ON CONFLICT (id) DO NOTHING RETURNING id INTO inserted_id;
     WHEN 'improvements' THEN
       improvement_row := jsonb_populate_record(NULL::public.memory_improvements, p_record);
       INSERT INTO public.memory_improvements (id, project, title, category, status, introduced_at, evidence, next_step,
         related_files, model_version_notes, tags, last_used_at, use_count, created_at, updated_at)
-      VALUES (improvement_row.id, improvement_row.project, improvement_row.title, improvement_row.category, improvement_row.status,
-        improvement_row.introduced_at, improvement_row.evidence, improvement_row.next_step, improvement_row.related_files,
-        improvement_row.model_version_notes, improvement_row.tags, improvement_row.last_used_at,
-        improvement_row.use_count, improvement_row.created_at, improvement_row.updated_at)
+      VALUES (improvement_row.id, improvement_row.project, improvement_row.title, improvement_row.category,
+        coalesce(improvement_row.status, 'experimenting'), improvement_row.introduced_at, improvement_row.evidence, improvement_row.next_step,
+        coalesce(improvement_row.related_files, '{}'), improvement_row.model_version_notes, coalesce(improvement_row.tags, '{}'),
+        improvement_row.last_used_at, coalesce(improvement_row.use_count, 0), improvement_row.created_at, improvement_row.updated_at)
       ON CONFLICT (id) DO NOTHING RETURNING id INTO inserted_id;
   END CASE;
   RETURN jsonb_build_object('inserted', inserted_id IS NOT NULL, 'id', record_id);

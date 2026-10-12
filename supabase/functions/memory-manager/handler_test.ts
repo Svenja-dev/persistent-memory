@@ -313,6 +313,8 @@ Deno.test("session load and list read explicit columns without the embedding vec
   equal((await call("GET", "?action=load_session")).response.status, 200);
   equal((await call("GET", "?tier=active")).response.status, 200);
   equal(database.selections.length, 5);
+  await call("POST", "", { tier: "core", id: ID, title: "Changed" });
+  equal(database.selections.length, 6);
   for (const selection of database.selections) {
     assert(selection !== "*" && !selection.includes("embedding"), selection);
     assert(selection.includes("created_at"), selection);
@@ -320,6 +322,23 @@ Deno.test("session load and list read explicit columns without the embedding vec
   equal(database.selections[1].includes("resolved_at"), true);
   equal(database.selections[2].includes("updated_at"), false);
   equal(database.selections[2].includes("session_id"), true);
+});
+
+Deno.test("top-level truncation ignores the deliberate five-session window", async () => {
+  const { database, call } = setup();
+  database.rows.memory_sessions = Array.from({ length: 9 }, () => ({ id: ID }));
+  const { payload } = await call("GET", "?action=load_session");
+  equal(payload.truncated, false);
+  equal((payload.recent_sessions as Row).truncated, true);
+});
+
+Deno.test("hard delete of an unknown core or session id returns 404", async () => {
+  const { database, call } = setup();
+  database.rows.memory_core = [coreRecord()];
+  equal((await call("DELETE", `?tier=core&id=${ID}`)).response.status, 200);
+  equal(database.rows.memory_core.length, 0);
+  equal((await call("DELETE", `?tier=core&id=${ID}`)).response.status, 404);
+  equal((await call("DELETE", `?tier=sessions&id=${ID}`)).response.status, 404);
 });
 
 Deno.test("R4 session load without an exact database count fails closed", async () => {

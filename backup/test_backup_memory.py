@@ -86,7 +86,6 @@ class BackupMemoryTests(unittest.TestCase):
             with self.subTest(expected=expected):
                 self.write_config(environment, dotenv)
                 self.assertEqual(backup_memory.get_api_credentials(), expected)
-                self.assertEqual(backup_memory.get_api_secret(), expected[0])
 
     def test_valid_environment_does_not_read_dotenv(self):
         os.environ["API_SECRET_BACKUP"] = "environment-dummy"

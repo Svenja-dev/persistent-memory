@@ -1,4 +1,4 @@
-// Memory API implementation. Dependencies are injected for offline regression tests.
+// Implementierung der Memory-API. Abhaengigkeiten werden injiziert, damit Regressionstests offline laufen.
 type Row = Record<string, unknown>;
 export type DatabaseError = {
   code?: string;
@@ -287,7 +287,7 @@ export function createMemoryHandler(dependencies: HandlerDependencies) {
     const privilegedMatches = matches.filter((name) =>
       name === "restore" || name === "backup"
     );
-    // Reserved credentials cannot be reused for another role; a header must never escalate rights.
+    // Reservierte Schluessel duerfen keiner anderen Rolle gehoeren; ein Header darf niemals Rechte erweitern.
     if (privilegedMatches.length && (matches.length > 1 || token === legacy)) {
       throw new HttpError(500, "Server auth role configuration invalid");
     }
@@ -372,7 +372,7 @@ export function createMemoryHandler(dependencies: HandlerDependencies) {
       if (tier === "active") query = query.eq("resolved", false);
       if (tier === "improvements") query = query.eq("status", "experimenting");
       if (project) {
-        // Quoting prevents punctuation in project names from becoming PostgREST filter syntax.
+        // Anfuehrungszeichen verhindern, dass Satzzeichen im Projektnamen zu PostgREST-Filtersyntax werden.
         const quoted = `"${
           project.replaceAll("\\", "\\\\").replaceAll('"', '\\"')
         }"`;
@@ -560,7 +560,7 @@ export function createMemoryHandler(dependencies: HandlerDependencies) {
           if (updateError) errors++;
           else processed++;
         }
-        // Preserve the existing backfill pacing for optional provider requests.
+        // Bestehendes Tempo des Backfills fuer optionale Provider-Anfragen beibehalten.
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
       return {
@@ -583,7 +583,7 @@ export function createMemoryHandler(dependencies: HandlerDependencies) {
       : ["title", "content"];
     const textChanged = tier !== "sessions" &&
       embeddingFields.some((field) => field in entry);
-    // Read complete text for partial updates and active state to preserve a previous resolution time.
+    // Vollstaendigen Text fuer Teilupdates lesen und bei Active den bisherigen Erledigungszeitpunkt erhalten.
     let previous: Row = {};
     if (
       updating && (textChanged || (tier === "active" && "resolved" in entry))
@@ -601,7 +601,7 @@ export function createMemoryHandler(dependencies: HandlerDependencies) {
       const text = embeddingFields.map((field) => combined[field] || "").join(
         " ",
       ).trim();
-      entry.embedding = await generateEmbedding(text); // null invalidates stale vectors when AI is disabled or fails.
+      entry.embedding = await generateEmbedding(text); // null invalidiert veraltete Vektoren, wenn KI deaktiviert ist oder fehlschlaegt.
     }
     if (tier === "active" && "resolved" in entry) {
       entry.resolved_at = entry.resolved
@@ -709,7 +709,7 @@ export function createMemoryHandler(dependencies: HandlerDependencies) {
         );
       }
       const status = isRow(error) ? pgStatus(error) : 500;
-      // Only log a code and correlation ID; database/provider details can contain memory text.
+      // Nur Code und Korrelations-ID loggen; Datenbank-/Provider-Details koennen Memory-Text enthalten.
       console.error(
         `[memory-manager] ${requestId} error status=${status} code=${
           isRow(error) ? error.code || "unknown" : "unknown"

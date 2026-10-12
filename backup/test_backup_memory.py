@@ -1,4 +1,4 @@
-"""Offline regressions for target isolation, complete exports and atomic retention."""
+"""Offline-Regressionen fuer Zielisolation, vollstaendige Exporte und atomare Aufbewahrung."""
 
 import contextlib
 import io
@@ -18,7 +18,7 @@ import backup_memory
 from backup_schema import validate_backup, validate_endpoint
 
 
-# Synthetic export fixtures shared with the restore regression tests.
+# Synthetische Export-Fixtures, gemeinsam mit den Restore-Regressionstests genutzt.
 ENDPOINT = "https://memory.example.test/functions/v1/memory-manager"
 OTHER_ENDPOINT = "https://other.example.test/functions/v1/memory-manager"
 STAMP = "2026-01-02T03:04:05.123456+00:00"
@@ -250,7 +250,7 @@ class RedirectTests(unittest.TestCase):
             response.msg = "Found"
             return response
 
-        # Exercise urllib's real error/redirect chain with an offline HTTP response.
+        # Die echte Fehler-/Redirect-Kette von urllib mit einer Offline-HTTP-Antwort durchlaufen.
         with patch.object(backup_memory.urllib.request.HTTPHandler, "http_open", respond):
             with self.assertRaises(urllib.error.HTTPError) as error:
                 backup_memory.fetch_backup("dummy", "backup", endpoint)

@@ -1,4 +1,4 @@
-// Production entrypoint. The handler is safe to import in offline regression tests.
+// Produktiver Einstiegspunkt. Der Handler kann in Offline-Regressionstests importiert werden.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.117.3";
 import { createMemoryHandler, type MemoryDatabase } from "./handler.ts";
 

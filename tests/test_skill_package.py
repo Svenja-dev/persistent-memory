@@ -1,4 +1,4 @@
-"""Exercise package boundaries using synthetic private files only."""
+"""Paketgrenzen ausschliesslich mit synthetischen privaten Dateien pruefen."""
 
 import importlib.util
 import os

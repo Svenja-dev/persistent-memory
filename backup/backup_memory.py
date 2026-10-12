@@ -1,7 +1,7 @@
-"""Validated, atomic Memory backups. Requires Python 3.11+ and explicit configuration.
+"""Validierte, atomare Memory-Backups. Benoetigt Python 3.11+ und explizite Konfiguration.
 
-Set MEMORY_API_URL and API_SECRET_BACKUP in the environment
-or backup/.env. No implicit personal endpoint or credential file is used.
+MEMORY_API_URL und API_SECRET_BACKUP in der Umgebung oder in backup/.env setzen.
+Es gibt keinen impliziten persoenlichen Endpunkt und keine private Secret-Datei.
 """
 
 import json
@@ -22,7 +22,7 @@ MAX_BACKUP_AGE_DAYS = 30
 
 
 def load_env() -> dict:
-    """Read literal dotenv values without modifying the process environment."""
+    """Dotenv-Werte wortgetreu lesen, ohne die Prozessumgebung zu veraendern."""
     values = {}
     env_file = BACKUP_DIR / ".env"
     if env_file.exists():
@@ -38,6 +38,7 @@ def load_env() -> dict:
 
 
 def get_api_url() -> str:
+    """Endpunkt aus Umgebung oder backup/.env lesen und kanonisieren."""
     value = os.environ.get("MEMORY_API_URL", "").strip()
     if not value:
         value = load_env().get("MEMORY_API_URL", "").strip()
@@ -45,6 +46,7 @@ def get_api_url() -> str:
 
 
 def get_api_credentials() -> Tuple[str, str]:
+    """Backup-Schluessel und Client-Namen liefern; kein Legacy-Fallback."""
     secret = os.environ.get("API_SECRET_BACKUP", "").strip()
     if not secret:
         secret = load_env().get("API_SECRET_BACKUP", "").strip()
@@ -54,20 +56,23 @@ def get_api_credentials() -> Tuple[str, str]:
 
 
 def get_api_secret() -> str:
+    """Nur den Backup-Schluessel liefern (Kompatibilitaet)."""
     return get_api_credentials()[0]
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        # Never forward a bearer token to a redirected target.
+        # Ein Bearer-Token wird niemals an ein Redirect-Ziel weitergereicht.
         return None
 
 
 def open_request(request: urllib.request.Request):
+    """Anfrage ohne Redirects und mit Timeout oeffnen."""
     return urllib.request.build_opener(_NoRedirect).open(request, timeout=30)
 
 
 def fetch_backup(api_secret: str, client: str = "backup", api_url: Optional[str] = None) -> dict:
+    """Vollstaendigen Export abrufen und gegen den Exportvertrag validieren."""
     endpoint = validate_endpoint(api_url) if api_url is not None else get_api_url()
     if client not in {"backup", "restore"}:
         raise ValueError("Backup-Zugriff benoetigt den Client backup oder restore")
@@ -80,7 +85,7 @@ def fetch_backup(api_secret: str, client: str = "backup", api_url: Optional[str]
 
 
 def save_backup(data: dict, source_url: Optional[str] = None) -> Tuple[Path, float]:
-    """Validate before creating any file; publish only a complete, flushed JSON file."""
+    """Vor dem Anlegen einer Datei validieren; nur eine vollstaendige, geflushte JSON-Datei veroeffentlichen."""
     validate_backup(data)
     endpoint = validate_endpoint(source_url) if source_url is not None else get_api_url()
     manifest = {**data, "source_url": endpoint}
@@ -106,7 +111,7 @@ def save_backup(data: dict, source_url: Optional[str] = None) -> Tuple[Path, flo
 
 
 def cleanup_old_backups(completed_backup: Path) -> int:
-    """Prune only verified older backups of this source after a verified new backup."""
+    """Nur verifizierte aeltere Backups derselben Quelle entfernen, und nur nach einem verifizierten neuen Backup."""
     if completed_backup.resolve().parent != BACKUP_DIR.resolve():
         raise ValueError("Neues Backup liegt ausserhalb des Backup-Verzeichnisses")
     manifest = json.loads(completed_backup.read_text(encoding="utf-8"))
@@ -120,7 +125,7 @@ def cleanup_old_backups(completed_backup: Path) -> int:
             older = json.loads(candidate.read_text(encoding="utf-8"))
             validate_backup(older, require_source=True)
         except (OSError, ValueError):
-            continue  # Preserve unverified/legacy files for manual inspection.
+            continue  # Unverifizierte oder alte Dateien fuer manuelle Pruefung behalten.
         if validate_endpoint(older["source_url"]) == validate_endpoint(manifest["source_url"]):
             candidate.unlink()
             removed += 1
@@ -128,6 +133,7 @@ def cleanup_old_backups(completed_backup: Path) -> int:
 
 
 def print_summary(data: dict, filepath: Path, size_kb: float, removed: int):
+    """Ergebnis des Backups auf der Konsole zusammenfassen."""
     print("Memory Backup erfolgreich")
     print(f"  Datei:     {filepath}")
     print(f"  Groesse:   {size_kb:.1f} KB")
@@ -138,8 +144,9 @@ def print_summary(data: dict, filepath: Path, size_kb: float, removed: int):
 
 
 def main() -> int:
+    """Ablauf: Ziel validieren, Zugangsdaten lesen, exportieren, atomar speichern, bereinigen."""
     try:
-        endpoint = get_api_url()  # Validate target before resolving or using credentials.
+        endpoint = get_api_url()  # Ziel validieren, bevor Zugangsdaten aufgeloest oder genutzt werden.
         api_secret, client = get_api_credentials()
         print(f"Backup-Quelle: {endpoint}")
         data = fetch_backup(api_secret, client, endpoint)

@@ -27,7 +27,7 @@ function assert(value: unknown, message = "Assertion failed"): asserts value {
   if (!value) throw new Error(message);
 }
 
-// Executes the small query surface used by the handler, including limits and exact counts.
+// Fuehrt die kleine Query-Oberflaeche des Handlers aus, einschliesslich Limits und exakter Counts.
 class FakeQuery<Single extends boolean = false> implements MemoryQuery<Single> {
   private operation = "select";
   private value: Row = {};
@@ -287,6 +287,23 @@ Deno.test("R4 load_session reports total counts, limits and truncation explicitl
   equal(sessions.count, 5);
   equal(sessions.total_count, 9);
   equal(sessions.truncated, true);
+});
+
+Deno.test("project filter quotes PostgREST syntax so a hostile project name cannot widen the scope", async () => {
+  const { database, call } = setup();
+  const hostile = 'x",project.not.is.null,backslash\\"';
+  const { response } = await call(
+    "GET",
+    `?action=load_session&project=${encodeURIComponent(hostile)}`,
+  );
+  equal(response.status, 200);
+  equal(database.scopes.length, 4);
+  for (const scope of database.scopes) {
+    equal(
+      scope,
+      'project.eq."x\\",project.not.is.null,backslash\\\\\\"",project.in.(global,shared),project.is.null',
+    );
+  }
 });
 
 Deno.test("R4 session load without an exact database count fails closed", async () => {

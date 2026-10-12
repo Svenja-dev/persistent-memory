@@ -52,8 +52,11 @@ jobs:
             -c cron.database_name=postgres \
             -c supautils.privileged_role=postgres \
             -c supautils.privileged_extensions=pg_cron,vector
+          # Das Image startet waehrend der Initialisierung einen temporaeren Server, auf den
+          # pg_isready bereits anspricht. Erst nach "init process complete" laeuft der echte Server.
           for attempt in $(seq 1 60); do
-            if docker exec memory-contract-db pg_isready -U postgres -d postgres; then exit 0; fi
+            if docker logs memory-contract-db 2>&1 | grep -q "PostgreSQL init process complete" \
+              && docker exec memory-contract-db pg_isready -U postgres -d postgres; then exit 0; fi
             sleep 2
           done
           docker logs memory-contract-db

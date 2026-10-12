@@ -1,5 +1,5 @@
-# Deploy only to the explicitly selected Supabase project.
-# Usage: ./deploy.ps1 -ProjectRef <20-character-project-ref>
+# Deployt ausschliesslich in das ausdruecklich angegebene Supabase-Projekt.
+# Aufruf: ./deploy.ps1 -ProjectRef <20-stellige-project-ref>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
@@ -13,7 +13,7 @@ $ErrorActionPreference = 'Stop'
 $functionUrl = "https://${ProjectRef}.supabase.co/functions/v1/memory-manager"
 $smokeHeaders = @{}
 
-# Fail before remote mutations; never search unrelated .env or home files.
+# Vor jeder Remote-Aenderung abbrechen; niemals fremde .env- oder Home-Dateien durchsuchen.
 if (-not $SkipSmokeTest) {
     if (-not [string]::IsNullOrWhiteSpace($env:API_SECRET_API)) {
         $smokeHeaders['Authorization'] = 'Bearer ' + $env:API_SECRET_API.Trim()
@@ -53,7 +53,7 @@ try {
     }
     Write-Host 'Deployment abgeschlossen.'
 } catch {
-    # Avoid leaking remote bodies or credential-bearing request details.
+    # Keine Antwortinhalte oder Request-Details mit Zugangsdaten ausgeben.
     Write-Host "FEHLER: $stage fehlgeschlagen. Deployment nicht als erfolgreich bestaetigt."
     exit 1
 } finally {

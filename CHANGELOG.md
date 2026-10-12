@@ -24,6 +24,14 @@ Alle relevanten Aenderungen am Persistent Memory System.
 - Fehlgeschlagene Deployment-Verbindungstests als Fehler beenden.
 - Deterministische API-, SQL-, Backup-/Restore-, Deployment- und Pakettests ohne bezahlten Modellzugang ergaenzt.
 
+### Review-Nacharbeit (PR #10)
+- Migration `20260909000000_search_include_global.sql` mit Migrations-ID im Header, vollqualifizierten `extensions.vector`-Typen, festem `search_path` und eigenen RPC-Grants; damit ist jede Migration einzeln installierbar und zu keinem Zeitpunkt oeffentlich aufrufbar.
+- Kommentare und Docstrings der neuen TypeScript-, Python- und PowerShell-Dateien auf Deutsch vereinheitlicht; Funktions-Docstrings ergaenzt.
+- Nicht mehr verwendetes Modul `embedding-helper.ts` aus Edge Function und Referenzkopie entfernt.
+- Regressionstests ergaenzt: Projektnamen mit PostgREST-Sonderzeichen bleiben im `load_session`-Filter gequotet; Restore-Bestaetigungen werden unabhaengig von der UUID-Schreibweise erkannt.
+- `scripts/test-payloads.sh` ohne private Pfade und an den neuen API-Vertrag angepasst (unbekannte Felder liefern 400, Restore ohne Rolle 403).
+- CI-Datenbankjob wartet auf den abgeschlossenen Init-Prozess des Supabase-Images statt nur auf `pg_isready`; vorher konnte die Cron-Migration gegen den temporaeren Init-Server laufen und zufaellig scheitern.
+
 ## [1.0.0] - 2026-02-27
 
 Erstes produktives Deployment auf Supabase.

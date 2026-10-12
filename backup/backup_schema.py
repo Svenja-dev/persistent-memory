@@ -1,4 +1,4 @@
-"""Version 1 export validation shared by backup and restore (no dependencies)."""
+"""Validierung des Exportvertrags Version 1, gemeinsam fuer Backup und Restore (ohne Abhaengigkeiten)."""
 
 import re
 from datetime import date, datetime
@@ -43,6 +43,7 @@ REQUIRED_VALUES = {
 
 
 def validate_endpoint(value: object) -> str:
+    """Endpunkt pruefen (HTTPS, fester Pfad, keine Zugangsdaten) und kanonisch zurueckgeben."""
     if not isinstance(value, str) or not value:
         raise ValueError("MEMORY_API_URL muss explizit konfiguriert werden")
     if any(character.isspace() or ord(character) < 32 for character in value) or "\\" in value:
@@ -69,6 +70,7 @@ def validate_endpoint(value: object) -> str:
 
 
 def _timestamp(value: object) -> bool:
+    """ISO-Zeitstempel mit Zeitzone erkennen."""
     if not isinstance(value, str) or not re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}", value):
         return False
     try:
@@ -78,6 +80,7 @@ def _timestamp(value: object) -> bool:
 
 
 def validate_record(tier: str, record: object) -> None:
+    """Einen exportierten Datensatz auf exakte Felder und gueltige Werte pruefen."""
     if not isinstance(record, dict) or set(record) != TIER_FIELDS[tier]:
         raise ValueError(f"Backup {tier}: unvollstaendige oder unbekannte Datensatzfelder")
     for field, value in record.items():
@@ -109,7 +112,7 @@ def validate_record(tier: str, record: object) -> None:
 
 
 def validate_backup(data: object, *, require_source: bool = False) -> None:
-    """Reject partial, legacy, malformed, or unverified exports before any mutation."""
+    """Unvollstaendige, alte, fehlerhafte oder unverifizierte Exporte vor jeder Aenderung abweisen."""
     if not isinstance(data, dict):
         raise ValueError("Backup muss ein JSON-Objekt sein")
     if (data.get("success") is not True or data.get("action") != "backup"

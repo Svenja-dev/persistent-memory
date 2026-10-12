@@ -22,6 +22,8 @@ Die Dateien unter `supabase/` sind autoritativ. Bei API-Aenderungen `index.ts` u
 
 Python 3.11+ ist die gemeinsame Mindestversion fuer Werkzeuge und Tests. API-Code nutzt Deno 2.x/TypeScript; keine unkontrollierten `any`-Typen. SQL-Funktionen mit `SECURITY DEFINER` benoetigen vollqualifizierte Objekte und ausdrueckliche Grants. Embeddings sind optional, externe Aufrufe werden in Tests simuliert.
 
+Konventionen: Kommentare, Docstrings und Dokumentation auf Deutsch (ASCII-Umschreibung ae/oe/ue/ss wie im Bestand); Variablen-, Funktions- und Testnamen auf Englisch. Jede Migration beginnt mit einem Kommentar-Header aus Beschreibung und Migrations-ID (`-- Migration: YYYYMMDDHHMMSS_beschreibung.sql`) und qualifiziert Typen aus `extensions` sowie Tabellen aus `public` vollstaendig, damit sie nicht vom `search_path` der Zielumgebung abhaengt. Kein Linting-Setup; die Tests unten sind die Pruefung.
+
 ## Pruefungen und Auslieferung
 
 ```powershell

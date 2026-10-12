@@ -1,4 +1,4 @@
-"""Offline restore regressions: complete validation, identity, resume and timestamps."""
+"""Offline-Regressionen fuer Restore: vollstaendige Validierung, Identitaet, Wiederaufnahme und Zeitstempel."""
 
 import contextlib
 import io
@@ -115,7 +115,7 @@ class CliTests(unittest.TestCase):
                 record = payload["record"]
                 if record["id"] == CORE_B["id"] and not interrupted[0]:
                     interrupted[0] = True
-                    # Commit reached the server, but its response was lost.
+                    # Der Commit hat den Server erreicht, die Antwort ging aber verloren.
                     stored[record["id"]] = record
                     raise urllib.error.URLError("simulated dropped response")
                 inserted = record["id"] not in stored
@@ -146,6 +146,13 @@ class CliTests(unittest.TestCase):
         body = {"success": True, "action": "restore", "tier": "core", "id": CORE_A["id"], "inserted": False}
         with patch.object(backup_memory, "open_request", return_value=contextlib.closing(io.BytesIO(json.dumps(body).encode()))):
             self.assertEqual(restore_memory.post_entry(payload, restore_memory.build_headers("dummy"), ENDPOINT), (True, "existing"))
+
+    def test_uppercase_backup_id_matches_lowercase_server_confirmation(self):
+        record = {**CORE_A, "id": CORE_A["id"].upper()}
+        payload = restore_memory.restore_payload("core", record)
+        body = {"success": True, "action": "restore", "tier": "core", "id": CORE_A["id"], "inserted": True}
+        with patch.object(backup_memory, "open_request", return_value=contextlib.closing(io.BytesIO(json.dumps(body).encode()))):
+            self.assertEqual(restore_memory.post_entry(payload, restore_memory.build_headers("dummy"), ENDPOINT), (True, "inserted"))
 
     def test_incomplete_temporary_file_is_never_selected(self):
         (self.directory / ".memory_backup_latest.tmp").write_text("{", encoding="utf-8")

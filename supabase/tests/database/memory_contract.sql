@@ -221,6 +221,38 @@ END;
 $$;
 RESET ROLE;
 
+-- Minimale Restore-Datensaetze ohne optionale Felder erhalten die Tabellen-Defaults.
+SET LOCAL ROLE service_role;
+DO $$
+DECLARE result jsonb;
+BEGIN
+  result := public.restore_memory_record('active', '{"id":"aaaaaaaa-0000-4000-8000-000000000006",
+    "created_at":"2026-01-01T12:00:00Z","updated_at":"2026-01-01T12:00:00Z",
+    "category":"work_state","title":"minimal restore","content":"ohne optionale Felder"}'::jsonb);
+  IF result ->> 'inserted' <> 'true' THEN RAISE EXCEPTION 'Minimal active restore failed'; END IF;
+  result := public.restore_memory_record('improvements', '{"id":"aaaaaaaa-0000-4000-8000-000000000007",
+    "created_at":"2026-01-01T12:00:00Z","updated_at":"2026-01-01T12:00:00Z",
+    "category":"workflow","title":"minimal improvement"}'::jsonb);
+  IF result ->> 'inserted' <> 'true' THEN RAISE EXCEPTION 'Minimal improvement restore failed'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.search_memory('minimal restore') WHERE id = 'aaaaaaaa-0000-4000-8000-000000000006') THEN
+    RAISE EXCEPTION 'Minimal restored active entry is invisible to search';
+  END IF;
+END;
+$$;
+RESET ROLE;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.memory_active WHERE id = 'aaaaaaaa-0000-4000-8000-000000000006'
+    AND resolved = false AND tags = '{}' AND priority = 'normal') THEN
+    RAISE EXCEPTION 'Minimal active restore did not apply table defaults';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.memory_improvements WHERE id = 'aaaaaaaa-0000-4000-8000-000000000007'
+    AND status = 'experimenting' AND use_count = 0 AND tags = '{}' AND related_files = '{}') THEN
+    RAISE EXCEPTION 'Minimal improvement restore did not apply table defaults';
+  END IF;
+END;
+$$;
+
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM public.memory_core WHERE id = 'aaaaaaaa-0000-4000-8000-000000000003' AND embedding IS NOT NULL)

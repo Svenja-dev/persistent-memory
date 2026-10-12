@@ -27,7 +27,7 @@ function assert(value: unknown, message = "Assertion failed"): asserts value {
   if (!value) throw new Error(message);
 }
 
-// Executes the small query surface used by the handler, including limits and exact counts.
+// Fuehrt die kleine Query-Oberflaeche des Handlers aus, einschliesslich Limits und exakter Counts.
 class FakeQuery<Single extends boolean = false> implements MemoryQuery<Single> {
   private operation = "select";
   private value: Row = {};
@@ -36,7 +36,8 @@ class FakeQuery<Single extends boolean = false> implements MemoryQuery<Single> {
   private singular = false;
   private exactCount = false;
   constructor(private database: FakeDatabase, private table: string) {}
-  select(_columns?: string, options?: { count: "exact" }): this {
+  select(columns?: string, options?: { count: "exact" }): this {
+    this.database.selections.push(columns ?? "*");
     this.exactCount = options?.count === "exact";
     return this;
   }
@@ -134,6 +135,7 @@ class FakeDatabase implements MemoryDatabase {
   queries: { table: string; operation: string; value: Row; maximum: number }[] =
     [];
   scopes: string[] = [];
+  selections: string[] = [];
   rpcCalls: { name: string; args?: Row }[] = [];
   rpcResult: { data: unknown; error: DatabaseError | null } = {
     data: null,
@@ -287,6 +289,56 @@ Deno.test("R4 load_session reports total counts, limits and truncation explicitl
   equal(sessions.count, 5);
   equal(sessions.total_count, 9);
   equal(sessions.truncated, true);
+});
+
+Deno.test("project filter quotes PostgREST syntax so a hostile project name cannot widen the scope", async () => {
+  const { database, call } = setup();
+  const hostile = 'x",project.not.is.null,backslash\\"';
+  const { response } = await call(
+    "GET",
+    `?action=load_session&project=${encodeURIComponent(hostile)}`,
+  );
+  equal(response.status, 200);
+  equal(database.scopes.length, 4);
+  for (const scope of database.scopes) {
+    equal(
+      scope,
+      'project.eq."x\\",project.not.is.null,backslash\\\\\\"",project.in.(global,shared),project.is.null',
+    );
+  }
+});
+
+Deno.test("session load and list read explicit columns without the embedding vector", async () => {
+  const { database, call } = setup();
+  equal((await call("GET", "?action=load_session")).response.status, 200);
+  equal((await call("GET", "?tier=active")).response.status, 200);
+  equal(database.selections.length, 5);
+  await call("POST", "", { tier: "core", id: ID, title: "Changed" });
+  equal(database.selections.length, 6);
+  for (const selection of database.selections) {
+    assert(selection !== "*" && !selection.includes("embedding"), selection);
+    assert(selection.includes("created_at"), selection);
+  }
+  equal(database.selections[1].includes("resolved_at"), true);
+  equal(database.selections[2].includes("updated_at"), false);
+  equal(database.selections[2].includes("session_id"), true);
+});
+
+Deno.test("top-level truncation ignores the deliberate five-session window", async () => {
+  const { database, call } = setup();
+  database.rows.memory_sessions = Array.from({ length: 9 }, () => ({ id: ID }));
+  const { payload } = await call("GET", "?action=load_session");
+  equal(payload.truncated, false);
+  equal((payload.recent_sessions as Row).truncated, true);
+});
+
+Deno.test("hard delete of an unknown core or session id returns 404", async () => {
+  const { database, call } = setup();
+  database.rows.memory_core = [coreRecord()];
+  equal((await call("DELETE", `?tier=core&id=${ID}`)).response.status, 200);
+  equal(database.rows.memory_core.length, 0);
+  equal((await call("DELETE", `?tier=core&id=${ID}`)).response.status, 404);
+  equal((await call("DELETE", `?tier=sessions&id=${ID}`)).response.status, 404);
 });
 
 Deno.test("R4 session load without an exact database count fails closed", async () => {

@@ -1,4 +1,4 @@
-"""Build the same instruction-only skill for Cowork and Codex (Python 3.11+)."""
+"""Dasselbe reine Anleitungs-Skill-Paket fuer Cowork und Codex bauen (Python 3.11+)."""
 
 from __future__ import annotations
 
@@ -12,14 +12,14 @@ import tempfile
 import zipfile
 
 
-APPROVED_FILES = ("LICENSE", "SKILL.md")
+APPROVED_FILES = ("LICENSE", "SKILL.md", "scripts/load_memory.py")
 ARCHIVE_ROOT = "persistent-memory"
 ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 MAX_DOCUMENT_BYTES = 256 * 1024
 
 
 def reject_links(path: Path) -> None:
-    """Reject symlinks, Windows junctions and other reparse points in a path."""
+    """Symlinks, Windows-Junctions und andere Reparse-Points in einem Pfad abweisen."""
     for component in (path, *path.parents):
         try:
             metadata = component.lstat()
@@ -33,7 +33,7 @@ def reject_links(path: Path) -> None:
 
 
 def build_skill(source: Path, output: Path | None = None) -> Path:
-    """Package only approved files; output must be a ZIP directly inside dist/."""
+    """Nur freigegebene Dateien paketieren (SKILL.md, LICENSE, Ladeskript); Ausgabe ist ein ZIP direkt in dist/."""
     if ".." in source.parts:
         raise ValueError("Source must not contain parent traversal")
     source = source.absolute()
@@ -95,6 +95,7 @@ def build_skill(source: Path, output: Path | None = None) -> Path:
 
 
 def main() -> int:
+    """Kommandozeile auswerten, Paket bauen und Pruefsumme ausgeben."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, default=Path(__file__).absolute().parent.parent)
     parser.add_argument("--output", type=Path, default=Path("dist/persistent-memory.zip"))

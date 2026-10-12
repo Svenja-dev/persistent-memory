@@ -1,4 +1,4 @@
-// Memory API implementation. Dependencies are injected for offline regression tests.
+// Implementierung der Memory-API. Abhaengigkeiten werden injiziert, damit Regressionstests offline laufen.
 type Row = Record<string, unknown>;
 export type DatabaseError = {
   code?: string;
@@ -139,6 +139,15 @@ const corsHeaders = {
     "authorization, x-memory-client, x-client-info, apikey, content-type",
 };
 
+// Lesespalten je Tier: alle Fachfelder plus Zeitstempel, ohne das grosse Embedding.
+function readColumns(tier: Tier): string {
+  return [
+    ...FIELDS[tier],
+    "created_at",
+    ...(tier === "sessions" ? [] : ["updated_at"]),
+    ...(tier === "active" ? ["resolved_at"] : []),
+  ].join(", ");
+}
 function isRow(value: unknown): value is Row {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -287,7 +296,7 @@ export function createMemoryHandler(dependencies: HandlerDependencies) {
     const privilegedMatches = matches.filter((name) =>
       name === "restore" || name === "backup"
     );
-    // Reserved credentials cannot be reused for another role; a header must never escalate rights.
+    // Reservierte Schluessel duerfen keiner anderen Rolle gehoeren; ein Header darf niemals Rechte erweitern.
     if (privilegedMatches.length && (matches.length > 1 || token === legacy)) {
       throw new HttpError(500, "Server auth role configuration invalid");
     }
@@ -366,13 +375,13 @@ export function createMemoryHandler(dependencies: HandlerDependencies) {
   async function handleLoadSession(project?: string) {
     const blocks = await Promise.all(TIERS.map(async (tier) => {
       const limit = tier === "sessions" ? 5 : 500;
-      let query = supabase.from(`memory_${tier}`).select("*", {
+      let query = supabase.from(`memory_${tier}`).select(readColumns(tier), {
         count: "exact",
       });
       if (tier === "active") query = query.eq("resolved", false);
       if (tier === "improvements") query = query.eq("status", "experimenting");
       if (project) {
-        // Quoting prevents punctuation in project names from becoming PostgREST filter syntax.
+        // Anfuehrungszeichen verhindern, dass Satzzeichen im Projektnamen zu PostgREST-Filtersyntax werden.
         const quoted = `"${
           project.replaceAll("\\", "\\\\").replaceAll('"', '\\"')
         }"`;
@@ -401,7 +410,10 @@ export function createMemoryHandler(dependencies: HandlerDependencies) {
       action: "load_session",
       project: project || "all",
       vector_search_enabled: !!env("OPENAI_API_KEY"),
-      truncated: blocks.some((block) => block.truncated),
+      // Das Fenster von fuenf Sessions ist gewollt und zaehlt nicht als abgeschnittener Kontext.
+      truncated: blocks.some((block, index) =>
+        TIERS[index] !== "sessions" && block.truncated
+      ),
       core: blocks[0],
       active: blocks[1],
       recent_sessions: blocks[2],
@@ -474,7 +486,7 @@ export function createMemoryHandler(dependencies: HandlerDependencies) {
   }
 
   async function handleGet(tier: Tier, params: URLSearchParams) {
-    let query = supabase.from(`memory_${tier}`).select("*");
+    let query = supabase.from(`memory_${tier}`).select(readColumns(tier));
     for (const key of ["project", "category"]) {
       if (params.get(key)) query = query.eq(key, params.get(key));
     }
@@ -560,7 +572,7 @@ export function createMemoryHandler(dependencies: HandlerDependencies) {
           if (updateError) errors++;
           else processed++;
         }
-        // Preserve the existing backfill pacing for optional provider requests.
+        // Bestehendes Tempo des Backfills fuer optionale Provider-Anfragen beibehalten.
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
       return {
@@ -583,15 +595,14 @@ export function createMemoryHandler(dependencies: HandlerDependencies) {
       : ["title", "content"];
     const textChanged = tier !== "sessions" &&
       embeddingFields.some((field) => field in entry);
-    // Read complete text for partial updates and active state to preserve a previous resolution time.
+    // Vollstaendigen Text fuer Teilupdates lesen und bei Active den bisherigen Erledigungszeitpunkt erhalten.
     let previous: Row = {};
     if (
       updating && (textChanged || (tier === "active" && "resolved" in entry))
     ) {
-      const { data, error } = await supabase.from(table).select("*").eq(
-        "id",
-        entry.id,
-      ).single();
+      const { data, error } = await supabase.from(table).select(
+        readColumns(tier),
+      ).eq("id", entry.id).single();
       if (error) throw error;
       if (!data) throw new HttpError(404, "Entry not found");
       previous = data;
@@ -601,7 +612,7 @@ export function createMemoryHandler(dependencies: HandlerDependencies) {
       const text = embeddingFields.map((field) => combined[field] || "").join(
         " ",
       ).trim();
-      entry.embedding = await generateEmbedding(text); // null invalidates stale vectors when AI is disabled or fails.
+      entry.embedding = await generateEmbedding(text); // null invalidiert veraltete Vektoren, wenn KI deaktiviert ist oder fehlschlaegt.
     }
     if (tier === "active" && "resolved" in entry) {
       entry.resolved_at = entry.resolved
@@ -640,10 +651,11 @@ export function createMemoryHandler(dependencies: HandlerDependencies) {
       if (error) throw error;
       return { success: true, action: "retired", tier, data };
     }
+    // single() liefert PGRST116 (404), wenn keine Zeile geloescht wurde.
     const { error } = await supabase.from(`memory_${tier}`).delete().eq(
       "id",
       id,
-    );
+    ).select().single();
     if (error) throw error;
     return { success: true, action: "deleted", tier, id };
   }
@@ -709,7 +721,7 @@ export function createMemoryHandler(dependencies: HandlerDependencies) {
         );
       }
       const status = isRow(error) ? pgStatus(error) : 500;
-      // Only log a code and correlation ID; database/provider details can contain memory text.
+      // Nur Code und Korrelations-ID loggen; Datenbank-/Provider-Details koennen Memory-Text enthalten.
       console.error(
         `[memory-manager] ${requestId} error status=${status} code=${
           isRow(error) ? error.code || "unknown" : "unknown"

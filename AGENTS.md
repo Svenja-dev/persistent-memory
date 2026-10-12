@@ -13,14 +13,16 @@ Persistent Memory ist eine Supabase Edge Function mit vier Tabellen: Core, Activ
 5. Normale POST-Felder pro Tier validieren. Restore ist eine eigene beschraenkte Operation und muss UUIDs, Zeitstempel und Lebenszyklus bewahren; niemals existierende Datensaetze ueberschreiben.
 6. Active verwendet `resolved`/`resolved_at`, Improvements `status=retired`. Export muss alle vier Tabellen konsistent und vollstaendig sichern; Pflichtfehler duerfen keine erfolgreichen leeren Antworten liefern.
 7. Backup-Rolle darf nicht schreiben. Restore braucht ein eigenes Secret und den expliziten Client-Header. Keine privilegienerweiternden Secret-Fallbacks fuer diese Rollen.
-8. Skill-Pakete entstehen nur ueber `scripts/build_skill.py` aus der expliziten Dateiliste `SKILL.md`, `LICENSE`. Niemals das gesamte Repository hochladen. Keine privaten Konfigurationsdateien ins installierte Skill-Verzeichnis legen.
-9. Fehlende optionale Skill-Konfiguration bleibt lautlos. Fehlgeschlagene konfigurierte Operationen muessen sichtbar fehlschlagen. Installation verspricht keinen automatischen Chatstart-Hook.
+8. Skill-Pakete entstehen nur ueber `scripts/build_skill.py` aus der expliziten Dateiliste `SKILL.md`, `LICENSE`, `scripts/load_memory.py`. Niemals das gesamte Repository hochladen. Keine privaten Konfigurationsdateien ins installierte Skill-Verzeichnis legen.
+9. Fehlende optionale Skill-Konfiguration bleibt lautlos. Fehlgeschlagene konfigurierte Operationen muessen sichtbar fehlschlagen. Automatisches Laden laeuft ueber `scripts/load_memory.py` (Claude-Code-Hook, Codex-`AGENTS.md`, Cowork-Skill); das Skript darf eine Sitzung nie blockieren, keine Secrets ausgeben und keine Embeddings uebertragen.
 
 ## Quellen und Kompatibilitaet
 
 Die Dateien unter `supabase/` sind autoritativ. Bei API-Aenderungen `index.ts` und `handler.ts` unter `edge-function/` identisch halten; Migrationen unter `supabase-migrations/` spiegeln. Nicht nur die Referenzkopie bearbeiten. Vier-Schichten-Vertrag, Rollen, Felder und Dokumentation zusammen aktualisieren.
 
 Python 3.11+ ist die gemeinsame Mindestversion fuer Werkzeuge und Tests. API-Code nutzt Deno 2.x/TypeScript; keine unkontrollierten `any`-Typen. SQL-Funktionen mit `SECURITY DEFINER` benoetigen vollqualifizierte Objekte und ausdrueckliche Grants. Embeddings sind optional, externe Aufrufe werden in Tests simuliert.
+
+Konventionen: Kommentare, Docstrings und Dokumentation auf Deutsch (ASCII-Umschreibung ae/oe/ue/ss wie im Bestand); Variablen-, Funktions- und Testnamen auf Englisch. Jede Migration beginnt mit einem Kommentar-Header aus Beschreibung und Migrations-ID (`-- Migration: YYYYMMDDHHMMSS_beschreibung.sql`) und qualifiziert Typen aus `extensions` sowie Tabellen aus `public` vollstaendig, damit sie nicht vom `search_path` der Zielumgebung abhaengt. Kein Linting-Setup; die Tests unten sind die Pruefung.
 
 ## Pruefungen und Auslieferung
 

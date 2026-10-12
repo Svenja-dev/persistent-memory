@@ -1,4 +1,4 @@
-"""Exercise package boundaries using synthetic private files only."""
+"""Paketgrenzen ausschliesslich mit synthetischen privaten Dateien pruefen."""
 
 import importlib.util
 import os
@@ -27,6 +27,8 @@ class SkillPackageTests(unittest.TestCase):
             "---\nname: persistent-memory\ndescription: Synthetic test.\n---\n", encoding="utf-8"
         )
         (self.source / "LICENSE").write_text("Synthetic license for test\n", encoding="utf-8")
+        (self.source / "scripts").mkdir()
+        (self.source / "scripts" / "load_memory.py").write_text("print('synthetic loader')\n", encoding="utf-8")
 
     def symlink(self, link, target, directory=False):
         try:
@@ -47,6 +49,7 @@ class SkillPackageTests(unittest.TestCase):
         with zipfile.ZipFile(artifact) as archive:
             self.assertEqual(archive.namelist(), [
                 "persistent-memory/LICENSE", "persistent-memory/SKILL.md",
+                "persistent-memory/scripts/load_memory.py",
             ])
             for member in archive.infolist():
                 self.assertEqual(member.date_time, (1980, 1, 1, 0, 0, 0))

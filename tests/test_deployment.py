@@ -1,4 +1,4 @@
-"""Run the actual deployment script with local PowerShell command doubles."""
+"""Das echte Deployment-Skript mit lokalen PowerShell-Befehlsattrappen ausfuehren."""
 import json
 import os
 from pathlib import Path

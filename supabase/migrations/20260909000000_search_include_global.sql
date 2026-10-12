@@ -1,93 +1,85 @@
--- Suchfunktionen: Eintraege mit project NULL, 'global' oder 'shared' sind projektuebergreifend
--- und werden auch bei gesetztem filter_project gefunden (gleiches Verhalten wie load_session).
+-- Suchfunktionen: projektuebergreifende Eintraege in gefilterten Suchen
+-- Migration: 20260909000000_search_include_global.sql
+-- Eintraege mit project NULL, 'global' oder 'shared' sind projektuebergreifend und
+-- werden auch bei gesetztem filter_project gefunden (gleiches Verhalten wie load_session).
+-- Typen und Tabellen sind vollqualifiziert, damit die Migration auch ohne
+-- 'extensions' im search_path installierbar ist. Die Folgemigration
+-- 20261010000000_professional_memory_contract.sql ersetzt beide Funktionen erneut.
 
-CREATE OR REPLACE FUNCTION search_memory(search_term TEXT, filter_project TEXT DEFAULT NULL)
+CREATE OR REPLACE FUNCTION public.search_memory(search_term text, filter_project text DEFAULT NULL)
 RETURNS TABLE (
-  source TEXT,
-  id UUID,
-  project TEXT,
-  category TEXT,
-  title TEXT,
-  content TEXT,
-  tags TEXT[],
-  created_at TIMESTAMPTZ
-) AS $$
-BEGIN
-  RETURN QUERY
-  SELECT 'core'::TEXT, mc.id, mc.project, mc.category, mc.title, mc.content, mc.tags, mc.created_at
-  FROM memory_core mc
-  WHERE (mc.title ILIKE '%' || search_term || '%' OR mc.content ILIKE '%' || search_term || '%')
-    AND (filter_project IS NULL OR mc.project = filter_project OR mc.project IS NULL OR mc.project IN ('global', 'shared'))
+  source text,
+  id uuid,
+  project text,
+  category text,
+  title text,
+  content text,
+  tags text[],
+  created_at timestamptz
+)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+  SELECT 'core'::text AS source, m.id, m.project, m.category, m.title, m.content, m.tags, m.created_at
+  FROM public.memory_core m
+  WHERE (m.title ILIKE '%' || search_term || '%' OR m.content ILIKE '%' || search_term || '%')
+    AND (filter_project IS NULL OR m.project = filter_project OR m.project IS NULL OR m.project IN ('global', 'shared'))
   UNION ALL
-  SELECT 'active'::TEXT, ma.id, ma.project, ma.category, ma.title, ma.content, ma.tags, ma.created_at
-  FROM memory_active ma
-  WHERE (ma.title ILIKE '%' || search_term || '%' OR ma.content ILIKE '%' || search_term || '%')
-    AND (filter_project IS NULL OR ma.project = filter_project OR ma.project IS NULL OR ma.project IN ('global', 'shared'))
-    AND ma.resolved = FALSE
+  SELECT 'active'::text, m.id, m.project, m.category, m.title, m.content, m.tags, m.created_at
+  FROM public.memory_active m
+  WHERE (m.title ILIKE '%' || search_term || '%' OR m.content ILIKE '%' || search_term || '%')
+    AND (filter_project IS NULL OR m.project = filter_project OR m.project IS NULL OR m.project IN ('global', 'shared'))
+    AND m.resolved = FALSE
   UNION ALL
-  SELECT 'session'::TEXT, ms.id, ms.project, 'session'::TEXT, ms.session_id, ms.summary, ms.tags, ms.created_at
-  FROM memory_sessions ms
-  WHERE (ms.summary ILIKE '%' || search_term || '%')
-    AND (filter_project IS NULL OR ms.project = filter_project OR ms.project IS NULL OR ms.project IN ('global', 'shared'))
+  SELECT 'session'::text, m.id, m.project, 'session'::text, m.session_id, m.summary, m.tags, m.created_at
+  FROM public.memory_sessions m
+  WHERE m.summary ILIKE '%' || search_term || '%'
+    AND (filter_project IS NULL OR m.project = filter_project OR m.project IS NULL OR m.project IN ('global', 'shared'))
   ORDER BY created_at DESC
   LIMIT 50;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$;
 
-CREATE OR REPLACE FUNCTION search_memory_semantic(
-  query_embedding vector(1536),
-  match_threshold FLOAT DEFAULT 0.5,
-  match_count INT DEFAULT 10,
-  filter_project TEXT DEFAULT NULL
+CREATE OR REPLACE FUNCTION public.search_memory_semantic(
+  query_embedding extensions.vector(1536),
+  match_threshold float DEFAULT 0.5,
+  match_count int DEFAULT 10,
+  filter_project text DEFAULT NULL
 )
 RETURNS TABLE (
-  source TEXT,
-  id UUID,
-  project TEXT,
-  category TEXT,
-  title TEXT,
-  content TEXT,
-  tags TEXT[],
-  similarity FLOAT,
-  created_at TIMESTAMPTZ
-) AS $$
-BEGIN
-  RETURN QUERY
+  source text,
+  id uuid,
+  project text,
+  category text,
+  title text,
+  content text,
+  tags text[],
+  similarity float,
+  created_at timestamptz
+)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
   SELECT * FROM (
-    SELECT
-      'core'::TEXT AS source,
-      mc.id,
-      mc.project,
-      mc.category,
-      mc.title,
-      mc.content,
-      mc.tags,
-      1 - (mc.embedding <=> query_embedding) AS similarity,
-      mc.created_at
-    FROM memory_core mc
-    WHERE mc.embedding IS NOT NULL
-      AND 1 - (mc.embedding <=> query_embedding) > match_threshold
-      AND (filter_project IS NULL OR mc.project = filter_project OR mc.project IS NULL OR mc.project IN ('global', 'shared'))
-
+    SELECT 'core'::text AS source, m.id, m.project, m.category, m.title, m.content, m.tags,
+      1 - (m.embedding OPERATOR(extensions.<=>) query_embedding) AS similarity, m.created_at
+    FROM public.memory_core m
+    WHERE m.embedding IS NOT NULL
+      AND 1 - (m.embedding OPERATOR(extensions.<=>) query_embedding) > match_threshold
+      AND (filter_project IS NULL OR m.project = filter_project OR m.project IS NULL OR m.project IN ('global', 'shared'))
     UNION ALL
-
-    SELECT
-      'active'::TEXT AS source,
-      ma.id,
-      ma.project,
-      ma.category,
-      ma.title,
-      ma.content,
-      ma.tags,
-      1 - (ma.embedding <=> query_embedding) AS similarity,
-      ma.created_at
-    FROM memory_active ma
-    WHERE ma.embedding IS NOT NULL
-      AND ma.resolved = FALSE
-      AND 1 - (ma.embedding <=> query_embedding) > match_threshold
-      AND (filter_project IS NULL OR ma.project = filter_project OR ma.project IS NULL OR ma.project IN ('global', 'shared'))
+    SELECT 'active'::text, m.id, m.project, m.category, m.title, m.content, m.tags,
+      1 - (m.embedding OPERATOR(extensions.<=>) query_embedding), m.created_at
+    FROM public.memory_active m
+    WHERE m.embedding IS NOT NULL
+      AND m.resolved = FALSE
+      AND 1 - (m.embedding OPERATOR(extensions.<=>) query_embedding) > match_threshold
+      AND (filter_project IS NULL OR m.project = filter_project OR m.project IS NULL OR m.project IN ('global', 'shared'))
   ) combined
   ORDER BY similarity DESC
   LIMIT match_count;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$;
+
+-- SECURITY-DEFINER-RPCs duerfen nur ueber die authentifizierende Edge Function laufen.
+-- Ohne diesen Entzug koennten anon/authenticated die Suche direkt per PostgREST aufrufen.
+REVOKE ALL ON FUNCTION public.search_memory(text, text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.search_memory_semantic(extensions.vector, float, int, text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.search_memory_hybrid(text, extensions.vector, float, int, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.search_memory(text, text) TO service_role;
+GRANT EXECUTE ON FUNCTION public.search_memory_semantic(extensions.vector, float, int, text) TO service_role;
+GRANT EXECUTE ON FUNCTION public.search_memory_hybrid(text, extensions.vector, float, int, text) TO service_role;

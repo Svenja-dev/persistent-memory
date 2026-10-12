@@ -34,7 +34,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # Nur bei PRs gegen main/master
-    if: github.event.pull_request.base.ref == 'main' || github.event.pull_request.base.ref == 'master'
+    # Optionales kostenpflichtiges Review; die deterministischen Pruefungen brauchen keinen Modell-API-Key.
+    if: vars.ENABLE_CLAUDE_REVIEW == 'true' && !github.event.pull_request.draft && (github.event.pull_request.base.ref == 'main' || github.event.pull_request.base.ref == 'master')
 
     steps:
       - name: Checkout

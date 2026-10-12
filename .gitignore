@@ -8,6 +8,7 @@ supabase/.branches/
 
 # Backups (generierte Dateien)
 backup/memory_backup_*.json
+backup/slack_archive_*.json
 
 # Dependencies
 node_modules/
@@ -24,3 +25,8 @@ SESSION_NOTES_*.md
 
 # Claude Code local state
 .claude/
+
+# Generated distribution and local test state
+dist/
+.test-tmp/
+.deno-cache/

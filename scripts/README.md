@@ -6,6 +6,12 @@ Baut das reproduzierbare Skill-Paket `dist/persistent-memory.zip` aus genau `SKI
 
     python -B scripts/build_skill.py
 
+## load_memory.py
+
+Laedt zu Sitzungsbeginn den Memory-Kontext (`load_session`) als kompakten Klartext. Wird mit dem Skill-Paket ausgeliefert und von Claude Code als `SessionStart`-Hook (`--hook`), von Codex und Cowork manuell aufgerufen. Stumm und Exit 0 ohne `MEMORY_API_URL`/`API_SECRET`; `--strict` fuer Diagnose. Einrichtung siehe [README.md](../README.md#automatisch-laden).
+
+    python -B scripts/load_memory.py --project beispiel
+
 ## test-payloads.sh
 
 Regressionstest fuer die Fehlerbehandlung der Edge Function `memory-manager` gegen eine laufende Instanz. Es werden synthetische Eintraege im Projekt `__regtest__` angelegt und anschliessend wieder entfernt (DELETE auf `active` markiert als erledigt, auf `improvements` als `retired`).

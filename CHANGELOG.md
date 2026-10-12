@@ -32,6 +32,11 @@ Alle relevanten Aenderungen am Persistent Memory System.
 - `scripts/test-payloads.sh` ohne private Pfade und an den neuen API-Vertrag angepasst (unbekannte Felder liefern 400, Restore ohne Rolle 403).
 - CI-Datenbankjob wartet auf den abgeschlossenen Init-Prozess des Supabase-Images statt nur auf `pg_isready`; vorher konnte die Cron-Migration gegen den temporaeren Init-Server laufen und zufaellig scheitern.
 
+### Automatisches Laden
+- Neues Ladeskript `scripts/load_memory.py` im Skill-Paket: laedt `load_session` fuer das aktuelle Projekt als kompakten Klartext, stumm ohne Konfiguration, sichtbar bei Fehlern, mit Laengenbegrenzung.
+- Claude Code laedt ueber einen dokumentierten `SessionStart`-Hook, Codex ueber `~/.codex/AGENTS.md`, Cowork ueber Skill-Beschreibung und Arbeitsablauf; SKILL.md fordert das Laden als ersten Schritt.
+- `load_session` und Listenabfragen waehlen Spalten ausdruecklich aus und uebertragen den Embedding-Vektor nicht mehr (bis zu 1536 Zahlen pro Eintrag).
+
 ## [1.0.0] - 2026-02-27
 
 Erstes produktives Deployment auf Supabase.

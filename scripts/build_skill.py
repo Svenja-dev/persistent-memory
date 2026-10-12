@@ -12,7 +12,7 @@ import tempfile
 import zipfile
 
 
-APPROVED_FILES = ("LICENSE", "SKILL.md")
+APPROVED_FILES = ("LICENSE", "SKILL.md", "scripts/load_memory.py")
 ARCHIVE_ROOT = "persistent-memory"
 ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 MAX_DOCUMENT_BYTES = 256 * 1024
@@ -33,7 +33,7 @@ def reject_links(path: Path) -> None:
 
 
 def build_skill(source: Path, output: Path | None = None) -> Path:
-    """Nur freigegebene Dateien paketieren; die Ausgabe muss ein ZIP direkt in dist/ sein."""
+    """Nur freigegebene Dateien paketieren (SKILL.md, LICENSE, Ladeskript); Ausgabe ist ein ZIP direkt in dist/."""
     if ".." in source.parts:
         raise ValueError("Source must not contain parent traversal")
     source = source.absolute()

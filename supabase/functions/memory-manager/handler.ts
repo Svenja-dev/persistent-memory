@@ -139,6 +139,15 @@ const corsHeaders = {
     "authorization, x-memory-client, x-client-info, apikey, content-type",
 };
 
+// Lesespalten je Tier: alle Fachfelder plus Zeitstempel, ohne das grosse Embedding.
+function readColumns(tier: Tier): string {
+  return [
+    ...FIELDS[tier],
+    "created_at",
+    ...(tier === "sessions" ? [] : ["updated_at"]),
+    ...(tier === "active" ? ["resolved_at"] : []),
+  ].join(", ");
+}
 function isRow(value: unknown): value is Row {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -366,7 +375,7 @@ export function createMemoryHandler(dependencies: HandlerDependencies) {
   async function handleLoadSession(project?: string) {
     const blocks = await Promise.all(TIERS.map(async (tier) => {
       const limit = tier === "sessions" ? 5 : 500;
-      let query = supabase.from(`memory_${tier}`).select("*", {
+      let query = supabase.from(`memory_${tier}`).select(readColumns(tier), {
         count: "exact",
       });
       if (tier === "active") query = query.eq("resolved", false);
@@ -474,7 +483,7 @@ export function createMemoryHandler(dependencies: HandlerDependencies) {
   }
 
   async function handleGet(tier: Tier, params: URLSearchParams) {
-    let query = supabase.from(`memory_${tier}`).select("*");
+    let query = supabase.from(`memory_${tier}`).select(readColumns(tier));
     for (const key of ["project", "category"]) {
       if (params.get(key)) query = query.eq(key, params.get(key));
     }

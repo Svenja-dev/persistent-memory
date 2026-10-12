@@ -36,7 +36,8 @@ class FakeQuery<Single extends boolean = false> implements MemoryQuery<Single> {
   private singular = false;
   private exactCount = false;
   constructor(private database: FakeDatabase, private table: string) {}
-  select(_columns?: string, options?: { count: "exact" }): this {
+  select(columns?: string, options?: { count: "exact" }): this {
+    this.database.selections.push(columns ?? "*");
     this.exactCount = options?.count === "exact";
     return this;
   }
@@ -134,6 +135,7 @@ class FakeDatabase implements MemoryDatabase {
   queries: { table: string; operation: string; value: Row; maximum: number }[] =
     [];
   scopes: string[] = [];
+  selections: string[] = [];
   rpcCalls: { name: string; args?: Row }[] = [];
   rpcResult: { data: unknown; error: DatabaseError | null } = {
     data: null,
@@ -304,6 +306,20 @@ Deno.test("project filter quotes PostgREST syntax so a hostile project name cann
       'project.eq."x\\",project.not.is.null,backslash\\\\\\"",project.in.(global,shared),project.is.null',
     );
   }
+});
+
+Deno.test("session load and list read explicit columns without the embedding vector", async () => {
+  const { database, call } = setup();
+  equal((await call("GET", "?action=load_session")).response.status, 200);
+  equal((await call("GET", "?tier=active")).response.status, 200);
+  equal(database.selections.length, 5);
+  for (const selection of database.selections) {
+    assert(selection !== "*" && !selection.includes("embedding"), selection);
+    assert(selection.includes("created_at"), selection);
+  }
+  equal(database.selections[1].includes("resolved_at"), true);
+  equal(database.selections[2].includes("updated_at"), false);
+  equal(database.selections[2].includes("session_id"), true);
 });
 
 Deno.test("R4 session load without an exact database count fails closed", async () => {

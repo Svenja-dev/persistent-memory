@@ -41,7 +41,7 @@ Auf allen Memory-Tabellen ist RLS aktiv. Such-, Export- und Restore-Funktionen s
 
 ## Kontext, Suche und Embeddings
 
-`load_session` liefert bis zu 500 Core-, offene Active- und experimentierende Improvement-Eintraege sowie fuenf aktuelle Sessions. Jeder Block enthaelt `count`, `total_count`, `limit`, `truncated` und `data`; die Antwort kennzeichnet auch insgesamt abgeschnittenen Kontext. Pflichtabfragefehler brechen den Aufruf ab. Fuer fehlenden Kontext dient gezielte Suche; ein Session-Abruf ist kein vollstaendiger Export.
+`load_session` liefert bis zu 500 Core-, offene Active- und experimentierende Improvement-Eintraege sowie fuenf aktuelle Sessions. Lesende Abfragen waehlen die Fachspalten und Zeitstempel ausdruecklich aus; der Embedding-Vektor wird nicht uebertragen. Jeder Block enthaelt `count`, `total_count`, `limit`, `truncated` und `data`; die Antwort kennzeichnet auch insgesamt abgeschnittenen Kontext. Pflichtabfragefehler brechen den Aufruf ab. Fuer fehlenden Kontext dient gezielte Suche; ein Session-Abruf ist kein vollstaendiger Export.
 
 Textsuche durchsucht alle vier Schichten. Erledigte Active-Eintraege und retired Improvements sind ausgeschlossen. Core und Active verwenden Titel und Inhalt, Sessions die Zusammenfassung, Improvements Titel, Evidence, Next Step und Model Version Notes.
 
@@ -73,7 +73,8 @@ Der ehemalige Statistikjob mit Verweis auf eine fremde `cron_logs`-Tabelle wird 
 - `supabase/functions/memory-manager/index.ts`: produktiver Einstieg; `handler.ts` enthaelt die injizierbare API-Logik. Die entsprechenden Dateien unter `edge-function/` sind synchron zu haltende Referenzkopien.
 - `supabase/migrations/`: autoritative Migrationen; `supabase-migrations/` sind Referenzkopien.
 - `backup/`: Python 3.11+, Backup-/Restore-Vertraege und Regressionstests.
-- `scripts/build_skill.py`: ausschliesslich `SKILL.md` und `LICENSE` im reproduzierbaren ZIP.
+- `scripts/build_skill.py`: ausschliesslich `SKILL.md`, `LICENSE` und `scripts/load_memory.py` im reproduzierbaren ZIP.
+- `scripts/load_memory.py`: Sitzungsstart-Lader (Claude-Code-Hook, Codex/Cowork manuell); stumm ohne Konfiguration, sichtbar bei Fehlern, Ausgabe ohne Embeddings und begrenzt.
 - `tests/` und API-/SQL-Tests: deterministische Regression ohne bezahlten Modellzugang.
 
-Installationsanleitung, Konfigurationsvariablen und Abnahmeablauf stehen in [README.md](README.md). Der Skill selbst enthaelt nur den begrenzten Client-Arbeitsablauf.
+Installationsanleitung, Konfigurationsvariablen, automatisches Laden und Abnahmeablauf stehen in [README.md](README.md). Der Skill selbst enthaelt den begrenzten Client-Arbeitsablauf und das Ladeskript.
